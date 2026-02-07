@@ -298,22 +298,41 @@ export class Session {
           ? (JSON.parse(toolCall.arguments) as Record<string, unknown>)
           : toolCall.arguments;
 
-      // b. Execute
+      // b. Pre-hook interceptor
+      const interceptor = this.config.toolCallInterceptor;
+      if (interceptor?.pre) {
+        const proceed = await interceptor.pre(toolCall.name, args);
+        if (!proceed) {
+          const skippedMsg = `Tool call skipped by interceptor: ${toolCall.name}`;
+          this.emit(EventKind.TOOL_CALL_END, {
+            call_id: toolCall.id,
+            output: skippedMsg,
+          });
+          return { toolCallId: toolCall.id, content: skippedMsg, isError: false };
+        }
+      }
+
+      // c. Execute
       const rawOutput = await tool.executor(args, this.executionEnv);
 
-      // c. Truncate
+      // d. Post-hook interceptor
+      if (interceptor?.post) {
+        await interceptor.post(toolCall.name, args, rawOutput);
+      }
+
+      // e. Truncate
       const truncatedOutput = truncateToolOutput(rawOutput, toolCall.name, {
         toolOutputLimits: {},
         toolLineLimits: {},
       });
 
-      // d. Emit TOOL_CALL_END with full output
+      // f. Emit TOOL_CALL_END with full output
       this.emit(EventKind.TOOL_CALL_END, {
         call_id: toolCall.id,
         output: rawOutput,
       });
 
-      // e. Return truncated result
+      // g. Return truncated result
       return {
         toolCallId: toolCall.id,
         content: truncatedOutput,

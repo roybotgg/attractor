@@ -9,6 +9,11 @@ export const SessionState = {
 
 export type SessionState = (typeof SessionState)[keyof typeof SessionState];
 
+export interface ToolCallInterceptor {
+  pre?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>;
+  post?: (toolName: string, args: Record<string, unknown>, output: string) => Promise<void>;
+}
+
 export interface SessionConfig {
   maxTurns: number;
   maxToolRoundsPerInput: number;
@@ -19,6 +24,7 @@ export interface SessionConfig {
   enableLoopDetection: boolean;
   loopDetectionWindow: number;
   maxSubagentDepth: number;
+  toolCallInterceptor?: ToolCallInterceptor;
 }
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {

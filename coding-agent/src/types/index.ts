@@ -4,6 +4,7 @@ export {
 } from "./session.js";
 export type {
   SessionConfig,
+  ToolCallInterceptor,
   UserTurn,
   AssistantTurn,
   ToolResultsTurn,

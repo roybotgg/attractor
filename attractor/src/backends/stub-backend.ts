@@ -1,7 +1,7 @@
 import type { Node } from "../types/graph.js";
 import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
-import type { CodergenBackend } from "../types/handler.js";
+import type { CodergenBackend, BackendRunOptions } from "../types/handler.js";
 
 export type StubResponseFn = (
   node: Node,
@@ -32,6 +32,7 @@ export class StubBackend implements CodergenBackend {
     node: Node,
     prompt: string,
     context: Context,
+    _options?: BackendRunOptions,
   ): Promise<string | Outcome> {
     if (this.responseFn) {
       return this.responseFn(node, prompt, context);

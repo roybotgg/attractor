@@ -12,5 +12,5 @@
     "sourceMap": true,
     "lib": ["ESNext"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "bin/**/*.ts"]
 }

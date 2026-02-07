@@ -14,6 +14,9 @@ export const PipelineEventKind = {
   INTERVIEW_COMPLETED: "interview_completed",
   INTERVIEW_TIMEOUT: "interview_timeout",
   CHECKPOINT_SAVED: "checkpoint_saved",
+  PIPELINE_RESTARTED: "pipeline_restarted",
+  TOOL_HOOK_PRE: "tool_hook_pre",
+  TOOL_HOOK_POST: "tool_hook_post",
 } as const;
 
 export type PipelineEventKind =

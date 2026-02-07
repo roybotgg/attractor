@@ -8,4 +8,7 @@ export type { NodeExecutor } from "./parallel.js";
 export { FanInHandler } from "./fan-in.js";
 export { ToolHandler } from "./tool.js";
 export { ManagerLoopHandler } from "./manager-loop.js";
+export type { ManagerLoopHandlerConfig, ChildProcessSpawner, ChildProcess } from "./manager-loop.js";
+export { SubPipelineHandler } from "./sub-pipeline.js";
+export type { SubPipelineHandlerConfig } from "./sub-pipeline.js";
 export { HandlerRegistry } from "./registry.js";

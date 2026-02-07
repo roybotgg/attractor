@@ -15,6 +15,8 @@ import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, executeWithRetry } from "./retry.js";
 import { checkGoalGates, getRetryTarget } from "./goal-gates.js";
 import { saveCheckpoint } from "./checkpoint.js";
+import { resolveFidelity } from "./fidelity.js";
+import { incomingEdges } from "../types/graph.js";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -147,12 +149,13 @@ export class PipelineRunner {
     }
 
     // Initialize context
-    const context = new Context();
+    let context = new Context();
     mirrorGraphAttributes(graph, context);
 
     const completedNodes: string[] = [];
     const nodeOutcomes = new Map<string, Outcome>();
     const logsRoot = this.config.logsRoot ?? "/tmp/attractor-logs";
+    let restartCount = 0;
 
     this.emitEvent(EventKind.PIPELINE_STARTED, { graphName: graph.name });
 
@@ -271,8 +274,36 @@ export class PipelineRunner {
 
       // Step 7: Handle loop_restart
       if (getBooleanAttr(nextEdge.attributes, "loop_restart", false)) {
-        // For now, just advance to the target node (full restart requires re-entry)
-        break;
+        restartCount++;
+
+        // Fresh context with graph attributes re-mirrored
+        context = new Context();
+        mirrorGraphAttributes(graph, context);
+
+        // Separator marker in completedNodes
+        completedNodes.push(`--- restart ${restartCount} ---`);
+
+        // Advance to target node
+        const restartTarget = graph.nodes.get(nextEdge.to);
+        if (!restartTarget) {
+          return {
+            outcome: createOutcome({
+              status: StageStatus.FAIL,
+              failureReason: `loop_restart target node not found: ${nextEdge.to}`,
+            }),
+            completedNodes,
+            context,
+          };
+        }
+        currentNode = restartTarget;
+
+        this.emitEvent(EventKind.PIPELINE_RESTARTED, {
+          restartCount,
+          targetNode: nextEdge.to,
+          logsRoot: join(logsRoot, "restart-" + String(restartCount)),
+        });
+
+        continue;
       }
 
       // Step 8: Advance to next node
@@ -287,6 +318,14 @@ export class PipelineRunner {
           context,
         };
       }
+
+      // Step 8b: Resolve fidelity for next node
+      const nextIncomingEdges = incomingEdges(graph, nextNode.id);
+      const nextIncomingEdge = nextIncomingEdges.length > 0 ? nextIncomingEdges[0] : undefined;
+      const fidelityResult = resolveFidelity(nextNode, nextIncomingEdge, graph);
+      context.set("_fidelity.mode", fidelityResult.mode);
+      context.set("_fidelity.threadId", fidelityResult.threadId);
+
       currentNode = nextNode;
     }
 

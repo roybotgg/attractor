@@ -1,13 +1,16 @@
 import type { Node } from "../types/graph.js";
 import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
-import type { CodergenBackend } from "../types/handler.js";
+import type { CodergenBackend, BackendRunOptions } from "../types/handler.js";
 import { Session } from "coding-agent/src/session/session.js";
 import { Client } from "unified-llm/src/client/client.js";
 import type { ProviderProfile } from "coding-agent/src/types/provider-profile.js";
 import type { ExecutionEnvironment } from "coding-agent/src/types/execution-env.js";
+import type { ToolCallInterceptor } from "coding-agent/src/types/session.js";
 import { EventKind } from "coding-agent/src/types/index.js";
 import { getStringAttr } from "../types/graph.js";
+import { executePreHook, executePostHook } from "../engine/tool-hooks.js";
+import { FidelityMode } from "../types/fidelity.js";
 
 export interface SessionBackendConfig {
   providerProfile: ProviderProfile;
@@ -23,6 +26,7 @@ export class SessionBackend implements CodergenBackend {
   private providerProfile: ProviderProfile;
   private executionEnv: ExecutionEnvironment;
   private llmClient: Client;
+  private sessionCache = new Map<string, Session>();
 
   constructor(config: SessionBackendConfig) {
     this.providerProfile = config.providerProfile;
@@ -34,6 +38,7 @@ export class SessionBackend implements CodergenBackend {
     node: Node,
     prompt: string,
     _context: Context,
+    options?: BackendRunOptions,
   ): Promise<string | Outcome> {
     // Optionally override model from node attributes
     const llmModel = getStringAttr(node.attributes, "llm_model");
@@ -42,10 +47,45 @@ export class SessionBackend implements CodergenBackend {
         ? { ...this.providerProfile, model: llmModel }
         : this.providerProfile;
 
+    // Build tool call interceptor from hook commands
+    let toolCallInterceptor: ToolCallInterceptor | undefined;
+    const stageDir = options?.logsRoot ?? "";
+    const preHook = options?.preToolHook;
+    const postHook = options?.postToolHook;
+
+    if (preHook || postHook) {
+      toolCallInterceptor = {};
+      if (preHook) {
+        toolCallInterceptor.pre = async (toolName, args) => {
+          const result = await executePreHook(preHook, toolName, args, stageDir, node.id);
+          return result.proceed;
+        };
+      }
+      if (postHook) {
+        toolCallInterceptor.post = async (toolName, args, output) => {
+          await executePostHook(postHook, toolName, args, output, stageDir, node.id);
+        };
+      }
+    }
+
+    const fidelityMode = options?.fidelityMode;
+    const threadId = options?.threadId ?? "";
+
+    // For full mode with a threadId, reuse or create a cached session
+    if (fidelityMode === FidelityMode.FULL && threadId !== "") {
+      return this.runWithCachedSession(
+        threadId,
+        profile,
+        toolCallInterceptor,
+        prompt,
+      );
+    }
+
     const session = new Session({
       providerProfile: profile,
       executionEnv: this.executionEnv,
       llmClient: this.llmClient,
+      config: toolCallInterceptor ? { toolCallInterceptor } : undefined,
     });
 
     await session.submit(prompt);
@@ -62,6 +102,40 @@ export class SessionBackend implements CodergenBackend {
     }
 
     await session.close();
+    return assistantText;
+  }
+
+  private async runWithCachedSession(
+    threadId: string,
+    profile: ProviderProfile,
+    toolCallInterceptor: ToolCallInterceptor | undefined,
+    prompt: string,
+  ): Promise<string> {
+    let session = this.sessionCache.get(threadId);
+
+    if (!session) {
+      session = new Session({
+        providerProfile: profile,
+        executionEnv: this.executionEnv,
+        llmClient: this.llmClient,
+        config: toolCallInterceptor ? { toolCallInterceptor } : undefined,
+      });
+      this.sessionCache.set(threadId, session);
+    }
+
+    await session.submit(prompt);
+
+    let assistantText = "";
+    for await (const event of session.events()) {
+      if (event.kind === EventKind.ASSISTANT_TEXT_END) {
+        const text = event.data["text"];
+        if (typeof text === "string") {
+          assistantText = text;
+        }
+      }
+    }
+
+    // Do not close cached sessions - they are reused
     return assistantText;
   }
 }

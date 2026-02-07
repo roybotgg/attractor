@@ -263,6 +263,199 @@ describe("PipelineRunner", () => {
     expect(result.context.get("graph.goal")).toBe("transformed");
   });
 
+  test("loop_restart creates fresh context with graph attrs re-mirrored", async () => {
+    let callCount = 0;
+    const registry = createHandlerRegistry();
+    registry.register("start", successHandler());
+    registry.register("exit", successHandler());
+    registry.register("codergen", {
+      execute: async (_node, ctx) => {
+        callCount++;
+        if (callCount === 1) {
+          return createOutcome({
+            status: StageStatus.SUCCESS,
+            contextUpdates: { "stale_key": "should_be_gone" },
+            preferredLabel: "restart",
+          });
+        }
+        // Second pass: stale_key should be absent, graph attrs should be present
+        return createOutcome({ status: StageStatus.SUCCESS });
+      },
+    });
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("work", { shape: stringAttr("box") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [
+        makeEdge("start", "work"),
+        makeEdge("work", "start", { loop_restart: booleanAttr(true), condition: stringAttr("preferred_label=restart") }),
+        makeEdge("work", "exit"),
+      ],
+      { goal: stringAttr("loop goal") },
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      logsRoot: "/tmp/attractor-runner-test-restart",
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // stale_key from first pass should not be in context after restart
+    expect(result.context.get("stale_key")).toBe("");
+    // graph attrs should be re-mirrored
+    expect(result.context.get("graph.goal")).toBe("loop goal");
+  });
+
+  test("loop_restart advances to target node", async () => {
+    const records: string[] = [];
+    let workCallCount = 0;
+    const registry = createHandlerRegistry();
+    registry.register("start", recordingHandler(records));
+    registry.register("exit", recordingHandler(records));
+    registry.register("codergen", {
+      execute: async (node) => {
+        records.push(node.id);
+        if (node.id === "work") {
+          workCallCount++;
+          if (workCallCount === 1) {
+            return createOutcome({
+              status: StageStatus.SUCCESS,
+              preferredLabel: "restart",
+            });
+          }
+        }
+        return createOutcome({ status: StageStatus.SUCCESS });
+      },
+    });
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("work", { shape: stringAttr("box") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [
+        makeEdge("start", "work"),
+        makeEdge("work", "start", { loop_restart: booleanAttr(true), condition: stringAttr("preferred_label=restart") }),
+        makeEdge("work", "exit"),
+      ],
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      logsRoot: "/tmp/attractor-runner-test-restart",
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // After restart, pipeline restarts at target (start), then work again, then exit
+    expect(records).toEqual(["start", "work", "start", "work"]);
+    expect(result.completedNodes).toContain("--- restart 1 ---");
+  });
+
+  test("loop_restart emits PIPELINE_RESTARTED event", async () => {
+    const events: PipelineEvent[] = [];
+    const emitter = { emit: (e: PipelineEvent) => events.push(e) };
+
+    let workCallCount = 0;
+    const registry = createHandlerRegistry();
+    registry.register("start", successHandler());
+    registry.register("exit", successHandler());
+    registry.register("codergen", {
+      execute: async () => {
+        workCallCount++;
+        if (workCallCount === 1) {
+          return createOutcome({
+            status: StageStatus.SUCCESS,
+            preferredLabel: "restart",
+          });
+        }
+        return createOutcome({ status: StageStatus.SUCCESS });
+      },
+    });
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("work", { shape: stringAttr("box") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [
+        makeEdge("start", "work"),
+        makeEdge("work", "start", { loop_restart: booleanAttr(true), condition: stringAttr("preferred_label=restart") }),
+        makeEdge("work", "exit"),
+      ],
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      eventEmitter: emitter,
+      logsRoot: "/tmp/attractor-runner-test-restart",
+    });
+
+    await runner.run(graph);
+
+    const restartEvents = events.filter((e) => e.kind === "pipeline_restarted");
+    expect(restartEvents).toHaveLength(1);
+    expect(restartEvents.at(0)?.data["restartCount"]).toBe(1);
+    expect(restartEvents.at(0)?.data["targetNode"]).toBe("start");
+  });
+
+  test("loop_restart increments restart counter", async () => {
+    const events: PipelineEvent[] = [];
+    const emitter = { emit: (e: PipelineEvent) => events.push(e) };
+
+    let workCallCount = 0;
+    const registry = createHandlerRegistry();
+    registry.register("start", successHandler());
+    registry.register("exit", successHandler());
+    registry.register("codergen", {
+      execute: async () => {
+        workCallCount++;
+        // Restart twice, then proceed
+        if (workCallCount <= 2) {
+          return createOutcome({
+            status: StageStatus.SUCCESS,
+            preferredLabel: "restart",
+          });
+        }
+        return createOutcome({ status: StageStatus.SUCCESS });
+      },
+    });
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("work", { shape: stringAttr("box") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [
+        makeEdge("start", "work"),
+        makeEdge("work", "start", { loop_restart: booleanAttr(true), condition: stringAttr("preferred_label=restart") }),
+        makeEdge("work", "exit"),
+      ],
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      eventEmitter: emitter,
+      logsRoot: "/tmp/attractor-runner-test-restart",
+    });
+
+    const result = await runner.run(graph);
+
+    const restartEvents = events.filter((e) => e.kind === "pipeline_restarted");
+    expect(restartEvents).toHaveLength(2);
+    expect(restartEvents.at(0)?.data["restartCount"]).toBe(1);
+    expect(restartEvents.at(1)?.data["restartCount"]).toBe(2);
+    expect(result.completedNodes).toContain("--- restart 1 ---");
+    expect(result.completedNodes).toContain("--- restart 2 ---");
+  });
+
   test("context updates are applied from outcomes", async () => {
     const registry = createHandlerRegistry();
     registry.register("start", successHandler());

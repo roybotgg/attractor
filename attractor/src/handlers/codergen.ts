@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Handler, CodergenBackend } from "../types/handler.js";
+import type { Handler, CodergenBackend, BackendRunOptions } from "../types/handler.js";
 import type { Node, Graph } from "../types/graph.js";
 import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
@@ -37,7 +37,14 @@ export class CodergenHandler implements Handler {
 
     if (this.backend) {
       try {
-        const result = await this.backend.run(node, prompt, context);
+        const preToolHook = getStringAttr(node.attributes, "tool_hooks.pre")
+        || getStringAttr(graph.attributes, "tool_hooks.pre")
+        || undefined;
+      const postToolHook = getStringAttr(node.attributes, "tool_hooks.post")
+        || getStringAttr(graph.attributes, "tool_hooks.post")
+        || undefined;
+      const options: BackendRunOptions = { logsRoot, preToolHook, postToolHook };
+        const result = await this.backend.run(node, prompt, context, options);
         if (typeof result !== "string") {
           // result is an Outcome
           await Bun.write(join(stageDir, "status.json"), JSON.stringify(result, null, 2));

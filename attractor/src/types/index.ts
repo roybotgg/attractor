@@ -32,7 +32,7 @@ export { Context } from "./context.js";
 
 export type { Checkpoint } from "./checkpoint.js";
 
-export type { Handler, CodergenBackend } from "./handler.js";
+export type { Handler, CodergenBackend, BackendRunOptions } from "./handler.js";
 
 export { QuestionType, AnswerValue } from "./interviewer.js";
 export type { Option, Question, Answer, Interviewer } from "./interviewer.js";
@@ -50,9 +50,11 @@ export type { Transform } from "./transform.js";
 export type { Selector, Declaration, StylesheetRule } from "./stylesheet.js";
 
 export type { ArtifactInfo } from "./artifact.js";
-export { ArtifactStore } from "./artifact.js";
+export { ArtifactStore, FILE_BACKING_THRESHOLD } from "./artifact.js";
 
 export type { BackoffConfig, RetryPolicy } from "./retry.js";
 export { PRESET_POLICIES, delayForAttempt } from "./retry.js";
 
 export { FidelityMode, isValidFidelityMode } from "./fidelity.js";
+
+export { JoinPolicy, ErrorPolicy, parseJoinPolicy, parseErrorPolicy } from "./parallel.js";

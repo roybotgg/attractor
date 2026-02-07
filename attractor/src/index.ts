@@ -19,7 +19,7 @@ export { validate, validateOrRaise, ValidationError, BUILT_IN_RULES } from "./va
 export { parseStylesheet, applyStylesheet } from "./stylesheet/index.js";
 
 // Transforms
-export { VariableExpansionTransform, StylesheetTransform, TransformRegistry } from "./transforms/index.js";
+export { VariableExpansionTransform, StylesheetTransform, GraphMergeTransform, TransformRegistry } from "./transforms/index.js";
 
 // Interviewers
 export {
@@ -28,7 +28,9 @@ export {
   CallbackInterviewer,
   QueueInterviewer,
   RecordingInterviewer,
+  WebInterviewer,
 } from "./interviewer/index.js";
+export type { ConsoleInterviewerOptions } from "./interviewer/index.js";
 
 // Handlers
 export {
@@ -41,8 +43,10 @@ export {
   FanInHandler,
   ToolHandler,
   ManagerLoopHandler,
+  SubPipelineHandler,
   HandlerRegistry,
 } from "./handlers/index.js";
+export type { NodeExecutor, ManagerLoopHandlerConfig, ChildProcessSpawner, ChildProcess, SubPipelineHandlerConfig } from "./handlers/index.js";
 
 // Engine
 export {
@@ -56,6 +60,11 @@ export {
   loadCheckpoint,
   PipelineRunner,
   createHandlerRegistry,
+  resolveFidelity,
+  resolveThreadId,
+  buildPreamble,
+  executePreHook,
+  executePostHook,
 } from "./engine/index.js";
 export type {
   HandlerRegistry as EngineHandlerRegistry,
@@ -63,11 +72,18 @@ export type {
   PipelineRunnerConfig,
   PipelineResult,
   GoalGateResult,
+  FidelityResolution,
 } from "./engine/index.js";
 
 // Backends
-export { StubBackend, SessionBackend } from "./backends/index.js";
-export type { StubResponseFn, SessionBackendConfig } from "./backends/index.js";
+export { StubBackend, SessionBackend, CliAgentBackend, ClaudeCodeBackend, CodexBackend, GeminiBackend } from "./backends/index.js";
+export type { StubResponseFn, SessionBackendConfig, CliAgentConfig } from "./backends/index.js";
 
 // Events
 export { PipelineEventEmitter } from "./events/index.js";
+
+// Server
+export { createServer } from "./server/index.js";
+export type { ServerConfig, AttractorServer, RouteContext, PipelineRecord } from "./server/index.js";
+export { handleRequest } from "./server/index.js";
+export { createSSEStream } from "./server/index.js";

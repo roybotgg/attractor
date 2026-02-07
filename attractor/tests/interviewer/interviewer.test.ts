@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { PassThrough } from "node:stream";
 import {
   QuestionType,
   AnswerValue,
@@ -10,6 +11,10 @@ import { AutoApproveInterviewer } from "../../src/interviewer/auto-approve.js";
 import { CallbackInterviewer } from "../../src/interviewer/callback.js";
 import { QueueInterviewer } from "../../src/interviewer/queue.js";
 import { RecordingInterviewer } from "../../src/interviewer/recording.js";
+import {
+  ConsoleInterviewer,
+  withTimeout,
+} from "../../src/interviewer/console.js";
 
 describe("AutoApproveInterviewer", () => {
   test("returns YES for YES_NO questions", async () => {
@@ -228,5 +233,84 @@ describe("RecordingInterviewer", () => {
     const recording = new RecordingInterviewer(inner);
     await recording.inform("hello", "stage");
     expect(informCalled).toBe(true);
+  });
+});
+
+function makeStreams(): { input: PassThrough; output: PassThrough } {
+  return { input: new PassThrough(), output: new PassThrough() };
+}
+
+
+describe("ConsoleInterviewer", () => {
+  test("timeout returns TIMEOUT answer", async () => {
+    const { input, output } = makeStreams();
+    const interviewer = new ConsoleInterviewer({
+      timeoutMs: 50,
+      input,
+      output,
+    });
+    const wrapped = withTimeout(interviewer);
+    const question = createQuestion({
+      text: "Will you answer?",
+      type: QuestionType.FREEFORM,
+    });
+    // Do not write to input -- let it time out
+    const answer = await wrapped.ask(question);
+    expect(answer.value).toBe(AnswerValue.TIMEOUT);
+  });
+
+  test("default answer used on empty input", async () => {
+    const { input, output } = makeStreams();
+    const interviewer = new ConsoleInterviewer({ input, output });
+    const defaultAnswer = createAnswer({ value: "fallback", text: "fallback" });
+    const question = createQuestion({
+      text: "Enter something",
+      type: QuestionType.FREEFORM,
+      defaultAnswer,
+    });
+    // Send empty line
+    input.end("\n");
+    const answer = await interviewer.ask(question);
+    expect(answer.value).toBe("fallback");
+    expect(answer).toBe(defaultAnswer);
+  });
+
+  test("validation retry on invalid multiple choice falls back to first option", async () => {
+    const { input, output } = makeStreams();
+    const interviewer = new ConsoleInterviewer({ input, output });
+    const question = createQuestion({
+      text: "Pick one",
+      type: QuestionType.MULTIPLE_CHOICE,
+      options: [
+        { key: "a", label: "Option A" },
+        { key: "b", label: "Option B" },
+      ],
+    });
+    // Send 3 invalid selections
+    input.end("z\nx\nq\n");
+    const answer = await interviewer.ask(question);
+    expect(answer.value).toBe("a");
+    expect(answer.selectedOption).toEqual({ key: "a", label: "Option A" });
+  });
+
+  test("ANSI formatting in output", async () => {
+    const { input, output } = makeStreams();
+    const interviewer = new ConsoleInterviewer({ input, output });
+    const question = createQuestion({
+      text: "Pick one",
+      type: QuestionType.MULTIPLE_CHOICE,
+      options: [{ key: "a", label: "Option A" }],
+    });
+    input.end("a\n");
+    await interviewer.ask(question);
+    const text = output.read()?.toString() ?? "";
+    // Bold question text
+    expect(text).toContain("\x1b[1m");
+    // Dim options
+    expect(text).toContain("\x1b[2m");
+    // Cyan prompt
+    expect(text).toContain("\x1b[36m");
+    // Reset codes
+    expect(text).toContain("\x1b[0m");
   });
 });
