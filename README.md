@@ -4,7 +4,9 @@ Attractor lets you define multi-stage AI workflows as visual graphs and run them
 
 This guide assumes no prior knowledge of this repository.
 
-![Example workflow: code, parallel reviews, human approval](./docs/images/workflow.png)
+<p align="center">
+  <img src="./docs/images/workflow.png" alt="Example workflow: code, parallel reviews, human approval" width="480">
+</p>
 
 ## What problem does this solve?
 
