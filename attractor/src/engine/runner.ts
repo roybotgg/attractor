@@ -194,6 +194,7 @@ export class PipelineRunner {
 
     // Initialize context
     const context = new Context();
+    context.set("run_id", this.pipelineId);
     mirrorGraphAttributes(graph, context);
 
     // Create run directory with unique run ID
@@ -250,6 +251,9 @@ export class PipelineRunner {
     // Restore context
     const context = new Context();
     context.applyUpdates(checkpoint.contextValues);
+    if (!context.has("run_id")) {
+      context.set("run_id", checkpoint.pipelineId);
+    }
 
     // Restore completedNodes
     const completedNodes = [...checkpoint.completedNodes];

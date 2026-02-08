@@ -83,6 +83,7 @@ describe("PipelineRunner", () => {
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(result.completedNodes).toEqual(["start", "work"]);
     expect(result.context.get("graph.goal")).toBe("test pipeline");
+    expect(result.context.getString("run_id")).not.toBe("");
     expect(records).toEqual(["start", "work"]);
   });
 

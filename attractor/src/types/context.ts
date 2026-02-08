@@ -1,5 +1,13 @@
 export type ContextValue = unknown;
 
+function cloneValue(value: ContextValue): ContextValue {
+  try {
+    return structuredClone(value);
+  } catch {
+    return value;
+  }
+}
+
 export class Context {
   private values: Map<string, ContextValue>;
   private logEntries: string[];
@@ -48,7 +56,7 @@ export class Context {
   clone(): Context {
     const ctx = new Context();
     for (const [key, value] of this.values) {
-      ctx.values.set(key, value);
+      ctx.values.set(key, cloneValue(value));
     }
     ctx.logEntries = [...this.logEntries];
     return ctx;

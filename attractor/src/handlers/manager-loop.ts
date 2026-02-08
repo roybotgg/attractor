@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute, resolve } from "node:path";
 import type { Handler } from "../types/handler.js";
 import type { Node, Graph } from "../types/graph.js";
 import type { Context } from "../types/context.js";
@@ -26,14 +26,15 @@ export type ChildProcess = {
 export type ChildProcessSpawner = (
   dotFile: string,
   logsRoot: string,
+  childWorkdir?: string,
 ) => ChildProcess;
 
-function defaultSpawner(dotFile: string, logsRoot: string): ChildProcess {
+function defaultSpawner(dotFile: string, logsRoot: string, childWorkdir?: string): ChildProcess {
   const childLogsRoot = join(logsRoot, "child");
   mkdirSync(childLogsRoot, { recursive: true });
 
   const proc = Bun.spawn(["bun", "run", dotFile], {
-    cwd: logsRoot,
+    cwd: childWorkdir ?? process.cwd(),
     env: { ...process.env, ATTRACTOR_LOGS_ROOT: childLogsRoot },
     stdout: "ignore",
     stderr: "ignore",
@@ -59,11 +60,13 @@ export type PipelineRunnerFactory = (
 function createInProcessSpawner(
   runnerFactory: PipelineRunnerFactory,
 ): ChildProcessSpawner {
-  return (dotFile: string, logsRoot: string): ChildProcess => {
+  return (dotFile: string, logsRoot: string, childWorkdir?: string): ChildProcess => {
     const childLogsRoot = join(logsRoot, "child");
     mkdirSync(childLogsRoot, { recursive: true });
 
-    const dotSource = readFileSync(dotFile, "utf-8");
+    const dotPath =
+      childWorkdir && !isAbsolute(dotFile) ? resolve(childWorkdir, dotFile) : dotFile;
+    const dotSource = readFileSync(dotPath, "utf-8");
     const graph = parse(dotSource);
     const runner = runnerFactory(graph, childLogsRoot);
 
@@ -166,11 +169,16 @@ export class ManagerLoopHandler implements Handler {
 
     // M7: Check child_autostart attribute (default true)
     const autostart = getBooleanAttr(node.attributes, "stack.child_autostart", true);
+    const childWorkdir = getStringAttr(graph.attributes, "stack.child_workdir");
 
     // Start child subprocess only if autostart is true
     let child: ChildProcess | undefined;
     if (autostart) {
-      child = this.spawner(dotFile, logsRoot);
+      child = this.spawner(
+        dotFile,
+        logsRoot,
+        childWorkdir !== "" ? childWorkdir : undefined,
+      );
     }
 
     if (!child) {

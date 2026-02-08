@@ -13,7 +13,6 @@ import { QueueInterviewer } from "../../src/interviewer/queue.js";
 import { RecordingInterviewer } from "../../src/interviewer/recording.js";
 import {
   ConsoleInterviewer,
-  withTimeout,
 } from "../../src/interviewer/console.js";
 
 describe("AutoApproveInterviewer", () => {
@@ -256,13 +255,12 @@ describe("ConsoleInterviewer", () => {
       input,
       output,
     });
-    const wrapped = withTimeout(interviewer);
     const question = createQuestion({
       text: "Will you answer?",
       type: QuestionType.FREEFORM,
     });
     // Do not write to input -- let it time out
-    const answer = await wrapped.ask(question);
+    const answer = await interviewer.ask(question);
     expect(answer.value).toBe(AnswerValue.TIMEOUT);
   });
 
