@@ -6,11 +6,8 @@ import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
 import { getStringAttr } from "../types/graph.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
-
-function expandVariables(prompt: string, graph: Graph, _context: Context): string {
-  const goal = getStringAttr(graph.attributes, "goal");
-  return prompt.replace(/\$goal/g, goal);
-}
+import { FidelityMode, isValidFidelityMode } from "../types/fidelity.js";
+import { statusFileFromOutcome } from "../utils/status-file.js";
 
 export class CodergenHandler implements Handler {
   private readonly backend: CodergenBackend | undefined;
@@ -25,7 +22,11 @@ export class CodergenHandler implements Handler {
     if (prompt === "") {
       prompt = getStringAttr(node.attributes, "label", node.id);
     }
-    prompt = expandVariables(prompt, graph, context);
+    const preamble = context.getString("_fidelity.preamble");
+    const activeFidelity = context.getString("_fidelity.mode");
+    if (preamble !== "" && activeFidelity !== FidelityMode.FULL) {
+      prompt = `${preamble}\n\n${prompt}`;
+    }
 
     // 2. Create stage directory and write prompt
     const stageDir = join(logsRoot, node.id);
@@ -43,11 +44,17 @@ export class CodergenHandler implements Handler {
       const postToolHook = getStringAttr(node.attributes, "tool_hooks.post")
         || getStringAttr(graph.attributes, "tool_hooks.post")
         || undefined;
-      const options: BackendRunOptions = { logsRoot, preToolHook, postToolHook };
+      const fidelityStr = context.getString("_fidelity.mode");
+      const fidelityMode = isValidFidelityMode(fidelityStr) ? fidelityStr : undefined;
+      const threadId = context.getString("_fidelity.threadId") || undefined;
+      const options: BackendRunOptions = { logsRoot, preToolHook, postToolHook, fidelityMode, threadId };
         const result = await this.backend.run(node, prompt, context, options);
         if (typeof result !== "string") {
           // result is an Outcome
-          await Bun.write(join(stageDir, "status.json"), JSON.stringify(result, null, 2));
+          await Bun.write(
+            join(stageDir, "status.json"),
+            JSON.stringify(statusFileFromOutcome(result), null, 2),
+          );
           return result;
         }
         responseText = result;
@@ -57,7 +64,10 @@ export class CodergenHandler implements Handler {
           status: StageStatus.FAIL,
           failureReason: message,
         });
-        await Bun.write(join(stageDir, "status.json"), JSON.stringify(failOutcome, null, 2));
+        await Bun.write(
+          join(stageDir, "status.json"),
+          JSON.stringify(statusFileFromOutcome(failOutcome), null, 2),
+        );
         return failOutcome;
       }
     } else {
@@ -76,7 +86,10 @@ export class CodergenHandler implements Handler {
         last_response: responseText.slice(0, 200),
       },
     });
-    await Bun.write(join(stageDir, "status.json"), JSON.stringify(outcome, null, 2));
+    await Bun.write(
+      join(stageDir, "status.json"),
+      JSON.stringify(statusFileFromOutcome(outcome), null, 2),
+    );
 
     return outcome;
   }

@@ -49,14 +49,14 @@ export function evaluateClause(
   const neqIndex = trimmed.indexOf("!=");
   if (neqIndex !== -1) {
     const key = trimmed.slice(0, neqIndex).trim();
-    const value = trimmed.slice(neqIndex + 2).trim();
+    const value = parseLiteral(trimmed.slice(neqIndex + 2));
     return resolveKey(key, outcome, context) !== value;
   }
 
   const eqIndex = trimmed.indexOf("=");
   if (eqIndex !== -1) {
     const key = trimmed.slice(0, eqIndex).trim();
-    const value = trimmed.slice(eqIndex + 1).trim();
+    const value = parseLiteral(trimmed.slice(eqIndex + 1));
     return resolveKey(key, outcome, context) === value;
   }
 
@@ -80,4 +80,24 @@ export function evaluateCondition(
 
   const clauses = condition.split("&&");
   return clauses.every((clause) => evaluateClause(clause, outcome, context));
+}
+
+function parseLiteral(raw: string): string {
+  const trimmed = raw.trim();
+  if (
+    trimmed.length >= 2 &&
+    trimmed.startsWith("\"") &&
+    trimmed.endsWith("\"")
+  ) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === "string") {
+        return parsed;
+      }
+    } catch {
+      // Fall through to unquoted form.
+    }
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }

@@ -5,10 +5,14 @@ import type { Node, Graph } from "../types/graph.js";
 import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
 import type { Interviewer, Option, Answer } from "../types/interviewer.js";
+import type { EventEmitter } from "../engine/runner.js";
+import type { PipelineEventKind, PipelineEventDataMap } from "../types/events.js";
 import { getStringAttr, outgoingEdges } from "../types/graph.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
 import { QuestionType, AnswerValue, createQuestion } from "../types/interviewer.js";
+import { PipelineEventKind as EventKind } from "../types/events.js";
 import { parseAcceleratorKey, normalizeLabel } from "../utils/label.js";
+import { statusFileFromOutcome } from "../utils/status-file.js";
 
 interface Choice {
   key: string;
@@ -37,9 +41,23 @@ function findMatchingChoice(answer: Answer, choices: readonly Choice[]): Choice 
 
 export class WaitForHumanHandler implements Handler {
   private readonly interviewer: Interviewer;
+  private readonly emitter: EventEmitter | undefined;
+  private readonly pipelineId: string;
 
-  constructor(interviewer: Interviewer) {
+  constructor(interviewer: Interviewer, emitter?: EventEmitter, pipelineId?: string) {
     this.interviewer = interviewer;
+    this.emitter = emitter;
+    this.pipelineId = pipelineId ?? "";
+  }
+
+  private emitEvent<K extends PipelineEventKind>(kind: K, data: PipelineEventDataMap[K]): void {
+    if (!this.emitter) return;
+    this.emitter.emit({
+      kind,
+      timestamp: new Date(),
+      pipelineId: this.pipelineId,
+      data,
+    });
   }
 
   async execute(node: Node, _context: Context, graph: Graph, logsRoot: string): Promise<Outcome> {
@@ -69,17 +87,21 @@ export class WaitForHumanHandler implements Handler {
     });
 
     // 3. Present to interviewer
+    this.emitEvent(EventKind.INTERVIEW_STARTED, { question: questionText, stage: node.id });
     const answer = await this.interviewer.ask(question);
+    this.emitEvent(EventKind.INTERVIEW_COMPLETED, { question: questionText, answer: answer.value });
 
     // 4. Handle timeout
     if (answer.value === AnswerValue.TIMEOUT) {
+      this.emitEvent(EventKind.INTERVIEW_TIMEOUT, { question: questionText, stage: node.id });
       const defaultChoice = getStringAttr(node.attributes, "human.default_choice");
       if (defaultChoice) {
         const defaultNormalized = normalizeLabel(defaultChoice);
         const found = choices.find(
           (c) =>
             normalizeLabel(c.key) === defaultNormalized ||
-            normalizeLabel(c.label) === defaultNormalized,
+            normalizeLabel(c.label) === defaultNormalized ||
+            normalizeLabel(c.to) === defaultNormalized,
         );
         if (found) {
           return createOutcome({
@@ -126,7 +148,10 @@ export class WaitForHumanHandler implements Handler {
         "human.gate.label": selected.label,
       },
     });
-    await Bun.write(join(stageDir, "status.json"), JSON.stringify(outcome, null, 2));
+    await Bun.write(
+      join(stageDir, "status.json"),
+      JSON.stringify(statusFileFromOutcome(outcome), null, 2),
+    );
     return outcome;
   }
 }

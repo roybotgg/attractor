@@ -18,9 +18,10 @@ export function resolveFidelity(
   node: Node,
   incomingEdge: Edge | undefined,
   graph: Graph,
+  prevNodeId: string = "",
 ): FidelityResolution {
   const mode = resolveMode(node, incomingEdge, graph);
-  const threadId = resolveThreadId(node, incomingEdge, graph, "");
+  const threadId = resolveThreadId(node, incomingEdge, graph, prevNodeId);
   return { mode, threadId };
 }
 
@@ -244,6 +245,9 @@ function buildSummaryHigh(
   lines.push("# Full Context");
   const snapshot = context.snapshot();
   for (const [key, value] of Object.entries(snapshot)) {
+    if (key === "_fidelity.preamble") {
+      continue;
+    }
     lines.push(`- ${key}: ${value}`);
   }
 

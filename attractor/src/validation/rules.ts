@@ -35,7 +35,9 @@ function resolveType(node: Node): string {
 
 function findStartNode(graph: Graph): Node | undefined {
   for (const node of graph.nodes.values()) {
-    if (resolveType(node) === "start") return node;
+    if (resolveType(node) === "start" || node.id === "start" || node.id === "Start") {
+      return node;
+    }
   }
   return undefined;
 }
@@ -43,7 +45,10 @@ function findStartNode(graph: Graph): Node | undefined {
 function findTerminalNodes(graph: Graph): Node[] {
   const result: Node[] = [];
   for (const node of graph.nodes.values()) {
-    if (resolveType(node) === "exit") result.push(node);
+    const lowerId = node.id.toLowerCase();
+    if (resolveType(node) === "exit" || lowerId === "exit" || lowerId === "end") {
+      result.push(node);
+    }
   }
   return result;
 }
@@ -55,7 +60,9 @@ const startNodeRule: LintRule = {
   apply(graph: Graph): Diagnostic[] {
     let count = 0;
     for (const node of graph.nodes.values()) {
-      if (resolveType(node) === "start") count++;
+      if (resolveType(node) === "start" || node.id === "start" || node.id === "Start") {
+        count++;
+      }
     }
     if (count === 0) {
       return [
