@@ -266,7 +266,7 @@ export function translateRequest(
           type: "json_schema",
           schema: request.responseFormat.jsonSchema,
           name: "response",
-          strict: request.responseFormat.strict ?? true,
+          strict: request.responseFormat.strict ?? false,
         },
       };
     } else if (request.responseFormat.type === "json") {

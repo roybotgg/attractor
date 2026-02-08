@@ -9,7 +9,7 @@ import type { TimeoutConfig } from "../types/timeout.js";
 import { StreamAccumulator } from "../utils/stream-accumulator.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
-import { ConfigurationError, RequestTimeoutError, UnsupportedToolChoiceError, InvalidToolCallError } from "../types/errors.js";
+import { ConfigurationError, RequestTimeoutError, UnsupportedToolChoiceError, InvalidToolCallError, SDKError, StreamError } from "../types/errors.js";
 import { validateToolName } from "../utils/validate-tool-name.js";
 import { validateJsonSchema } from "../utils/validate-json-schema.js";
 import { retry } from "../utils/retry.js";
@@ -153,6 +153,9 @@ export function stream(options: StreamOptions): StreamResult {
   if (options.prompt !== undefined && options.messages !== undefined) {
     throw new ConfigurationError("Cannot specify both 'prompt' and 'messages'");
   }
+  if (options.prompt === undefined && options.messages === undefined) {
+    throw new ConfigurationError("Must specify either 'prompt' or 'messages'");
+  }
 
   const client = options.client ?? getDefaultClient();
 
@@ -163,7 +166,7 @@ export function stream(options: StreamOptions): StreamResult {
         throw new ConfigurationError(`Invalid tool name "${tool.name}": ${nameError}`);
       }
       const params = tool.parameters;
-      if (params["type"] !== undefined && params["type"] !== "object") {
+      if (params["type"] !== "object") {
         throw new ConfigurationError(
           `Tool "${tool.name}" parameters must have "type": "object" at the root`,
         );
@@ -265,13 +268,32 @@ export function stream(options: StreamOptions): StreamResult {
       }
 
       if (connectedStream) {
-        for await (const event of connectedStream) {
-          accumulator.process(event);
-          if (event.type === StreamEventType.FINISH) {
-            yield { ...event, response: accumulator.response() };
-          } else {
-            yield event;
+        let streamFailed = false;
+        try {
+          for await (const event of connectedStream) {
+            accumulator.process(event);
+            if (event.type === StreamEventType.FINISH) {
+              yield { ...event, response: accumulator.response() };
+            } else {
+              yield event;
+            }
           }
+        } catch (error) {
+          const streamError = error instanceof SDKError
+            ? error
+            : new StreamError(
+              `Stream failed: ${error instanceof Error ? error.message : String(error)}`,
+              error instanceof Error ? { cause: error } : undefined,
+            );
+          yield {
+            type: StreamEventType.ERROR,
+            error: streamError,
+            raw: error,
+          };
+          streamFailed = true;
+        }
+        if (streamFailed) {
+          break;
         }
       }
 

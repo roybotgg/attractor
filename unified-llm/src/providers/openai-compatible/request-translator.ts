@@ -215,12 +215,12 @@ export function translateRequest(
     if (request.responseFormat.type === "json_schema") {
       body.response_format = {
         type: "json_schema",
-        json_schema: {
-          name: "response",
-          schema: request.responseFormat.jsonSchema,
-          strict: request.responseFormat.strict ?? true,
-        },
-      };
+          json_schema: {
+            name: "response",
+            schema: request.responseFormat.jsonSchema,
+            strict: request.responseFormat.strict ?? false,
+          },
+        };
     } else if (request.responseFormat.type === "json") {
       body.response_format = { type: "json_object" };
     }

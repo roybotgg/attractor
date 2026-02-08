@@ -1,5 +1,3 @@
-import type { Message } from "../types/message.js";
-import { assistantMessage, userMessage } from "../types/message.js";
 import type { ToolChoice } from "../types/tool.js";
 import { NoObjectGeneratedError } from "../types/errors.js";
 import { safeJsonParse } from "../utils/json.js";
@@ -20,22 +18,25 @@ export interface GenerateObjectOptions
   schemaDescription?: string;
   /** Strategy for structured output: "auto" (choose best), "tool" (use tool calling), or "json_schema" (use native JSON schema). Default: "auto" */
   strategy?: "auto" | "tool" | "json_schema";
-  /** Maximum schema-validation retries with feedback (default: 2) */
+  /** Deprecated: schema/parse failures are not retried. This option is ignored. */
   maxValidationRetries?: number;
 }
 
 export async function generateObject(
   options: GenerateObjectOptions,
 ): Promise<GenerateResult> {
-  const { schema, schemaName, schemaDescription, maxValidationRetries, strategy: explicitStrategy, ...generateOpts } = options;
+  const { schema, schemaName, schemaDescription, maxValidationRetries: _maxValidationRetries, strategy: explicitStrategy, ...generateOpts } = options;
 
   const strategy = resolveStrategy(explicitStrategy ?? "auto", options.client ?? getDefaultClient(), options.provider);
 
   if (strategy === "json_schema") {
-    return generateObjectWithJsonSchema({ schema, schemaName, schemaDescription, maxValidationRetries, ...generateOpts });
+    return generateObjectWithJsonSchema({
+      schema,
+      schemaName,
+      schemaDescription,
+      ...generateOpts,
+    });
   }
-
-  const maxRetries = maxValidationRetries ?? 2;
 
   // Use tool extraction strategy
   const extractToolName = schemaName ?? "extract";
@@ -50,64 +51,31 @@ export async function generateObject(
     toolName: extractToolName,
   };
 
-  const messages: Message[] = generateOpts.messages
-    ? [...generateOpts.messages]
-    : [];
-  const prompt = generateOpts.prompt;
-  let lastError = "";
+  const result = await generate({
+    ...generateOpts,
+    tools: [extractTool],
+    toolChoice,
+    maxToolRounds: 0,
+  });
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const callOpts =
-      attempt === 0 && prompt !== undefined
-        ? { ...generateOpts, prompt, messages: undefined }
-        : { ...generateOpts, prompt: undefined, messages };
-
-    const result = await generate({
-      ...callOpts,
-      tools: [extractTool],
-      toolChoice,
-      maxToolRounds: 0,
-    });
-
-    const toolCall = result.toolCalls.find((tc) => tc.name === extractToolName);
-    if (!toolCall) {
-      lastError =
-        "Model did not produce a tool call for structured output extraction";
-      // Build messages for retry from the prompt + assistant response
-      if (attempt === 0 && prompt !== undefined) {
-        messages.push(userMessage(prompt));
-      }
-      messages.push(result.response.message);
-      messages.push(
-        userMessage(
-          `Your output did not match the expected format: ${lastError}. Please try again.`,
-        ),
-      );
-      continue;
-    }
-
-    const validation = validateJsonSchema(toolCall.arguments, schema);
-    if (!validation.valid) {
-      lastError = `Model output does not match schema: ${validation.errors}`;
-      if (attempt === 0 && prompt !== undefined) {
-        messages.push(userMessage(prompt));
-      }
-      messages.push(result.response.message);
-      messages.push(
-        userMessage(
-          `Your output did not match the schema: ${validation.errors}. Please try again.`,
-        ),
-      );
-      continue;
-    }
-
-    return {
-      ...result,
-      output: toolCall.arguments,
-    };
+  const toolCall = result.toolCalls.find((tc) => tc.name === extractToolName);
+  if (!toolCall) {
+    throw new NoObjectGeneratedError(
+      "Model did not produce a tool call for structured output extraction",
+    );
   }
 
-  throw new NoObjectGeneratedError(lastError);
+  const validation = validateJsonSchema(toolCall.arguments, schema);
+  if (!validation.valid) {
+    throw new NoObjectGeneratedError(
+      `Model output does not match schema: ${validation.errors}`,
+    );
+  }
+
+  return {
+    ...result,
+    output: toolCall.arguments,
+  };
 }
 
 function resolveStrategy(
@@ -132,65 +100,33 @@ function resolveStrategy(
 export async function generateObjectWithJsonSchema(
   options: GenerateObjectOptions,
 ): Promise<GenerateResult> {
-  const { schema, schemaName, schemaDescription, maxValidationRetries, strategy: _strategy, ...generateOpts } = options;
+  const { schema, schemaName: _schemaName, schemaDescription: _schemaDescription, maxValidationRetries: _maxValidationRetries, strategy: _strategy, ...generateOpts } = options;
 
-  const maxRetries = maxValidationRetries ?? 2;
-  const messages: Message[] = generateOpts.messages
-    ? [...generateOpts.messages]
-    : [];
-  const prompt = generateOpts.prompt;
-  let lastError = "";
+  const result = await generate({
+    ...generateOpts,
+    responseFormat: {
+      type: "json_schema",
+      jsonSchema: schema,
+      strict: true,
+    },
+  });
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const callOpts =
-      attempt === 0 && prompt !== undefined
-        ? { ...generateOpts, prompt, messages: undefined }
-        : { ...generateOpts, prompt: undefined, messages };
-
-    const result = await generate({
-      ...callOpts,
-      responseFormat: {
-        type: "json_schema",
-        jsonSchema: schema,
-        strict: true,
-      },
-    });
-
-    const parsed = safeJsonParse(result.text);
-    if (!parsed.success) {
-      lastError = `Failed to parse model output as JSON: ${parsed.error.message}`;
-      if (attempt === 0 && prompt !== undefined) {
-        messages.push(userMessage(prompt));
-      }
-      messages.push(assistantMessage(result.text));
-      messages.push(
-        userMessage(
-          `Your output was not valid JSON: ${parsed.error.message}. Please try again.`,
-        ),
-      );
-      continue;
-    }
-
-    const validation = validateJsonSchema(parsed.value, schema);
-    if (!validation.valid) {
-      lastError = `Model output does not match schema: ${validation.errors}`;
-      if (attempt === 0 && prompt !== undefined) {
-        messages.push(userMessage(prompt));
-      }
-      messages.push(assistantMessage(result.text));
-      messages.push(
-        userMessage(
-          `Your output did not match the schema: ${validation.errors}. Please try again.`,
-        ),
-      );
-      continue;
-    }
-
-    return {
-      ...result,
-      output: parsed.value,
-    };
+  const parsed = safeJsonParse(result.text);
+  if (!parsed.success) {
+    throw new NoObjectGeneratedError(
+      `Failed to parse model output as JSON: ${parsed.error.message}`,
+    );
   }
 
-  throw new NoObjectGeneratedError(lastError);
+  const validation = validateJsonSchema(parsed.value, schema);
+  if (!validation.valid) {
+    throw new NoObjectGeneratedError(
+      `Model output does not match schema: ${validation.errors}`,
+    );
+  }
+
+  return {
+    ...result,
+    output: parsed.value,
+  };
 }

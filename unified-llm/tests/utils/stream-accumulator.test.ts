@@ -102,6 +102,29 @@ describe("StreamAccumulator", () => {
     });
   });
 
+  test("preserves redacted reasoning events", () => {
+    const acc = new StreamAccumulator();
+    acc.process({ type: StreamEventType.STREAM_START, model: "test-model" });
+    acc.process({ type: StreamEventType.REASONING_START });
+    acc.process({
+      type: StreamEventType.REASONING_DELTA,
+      reasoningDelta: "opaque-redacted-data",
+      redacted: true,
+    });
+    acc.process({ type: StreamEventType.REASONING_END });
+    acc.process({ type: StreamEventType.FINISH, finishReason: { reason: "stop" } });
+
+    const response = acc.response();
+    expect(response.message.content).toHaveLength(1);
+    expect(response.message.content[0]).toEqual({
+      kind: "redacted_thinking",
+      thinking: {
+        text: "opaque-redacted-data",
+        redacted: true,
+      },
+    });
+  });
+
   test("handles mixed text and tool calls", () => {
     const acc = new StreamAccumulator();
     acc.process({ type: StreamEventType.STREAM_START, model: "test-model" });
@@ -137,6 +160,21 @@ describe("StreamAccumulator", () => {
 
     const response = acc.response();
     expect(response.warnings).toEqual([]);
+  });
+
+  test("includes warnings from STREAM_START events", () => {
+    const acc = new StreamAccumulator();
+    acc.process({
+      type: StreamEventType.STREAM_START,
+      model: "test-model",
+      warnings: [{ message: "Dropped unsupported content", code: "unsupported_part" }],
+    });
+    acc.process({ type: StreamEventType.FINISH, finishReason: { reason: "stop" } });
+
+    const response = acc.response();
+    expect(response.warnings).toEqual([
+      { message: "Dropped unsupported content", code: "unsupported_part" },
+    ]);
   });
 
   test("addWarning accumulates warnings into response", () => {

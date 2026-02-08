@@ -51,6 +51,48 @@ describe("OpenAICompatibleAdapter", () => {
     }
   });
 
+  test("extracts Retry-After HTTP-date header on 429 rate limit", async () => {
+    const retryAt = new Date(Date.now() + 45_000).toUTCString();
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          JSON.stringify({ error: { message: "Rate limited" } }),
+          {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "retry-after": retryAt,
+            },
+          },
+        );
+      },
+    });
+
+    try {
+      const adapter = new OpenAICompatibleAdapter({
+        baseUrl: `http://localhost:${server.port}`,
+      });
+
+      let caught: unknown;
+      try {
+        await adapter.complete({
+          model: "test-model",
+          messages: [],
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(RateLimitError);
+      const retryAfter = (caught as RateLimitError).retryAfter;
+      expect(retryAfter).toBeDefined();
+      expect(retryAfter).toBeGreaterThan(0);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("maps 408 to RequestTimeoutError", async () => {
     const server = Bun.serve({
       port: 0,

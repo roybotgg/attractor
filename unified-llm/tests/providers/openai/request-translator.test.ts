@@ -314,7 +314,7 @@ describe("OpenAI Request Translator", () => {
         type: "json_schema",
         schema: { type: "object", properties: { name: { type: "string" } } },
         name: "response",
-        strict: true,
+        strict: false,
       },
     });
   });

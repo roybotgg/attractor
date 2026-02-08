@@ -4,7 +4,7 @@ import { Client } from "../../src/client/client.js";
 import { StubAdapter } from "../stubs/stub-adapter.js";
 import type { StreamEvent } from "../../src/types/stream-event.js";
 import { StreamEventType } from "../../src/types/stream-event.js";
-import { ServerError, AuthenticationError, RequestTimeoutError, ConfigurationError, UnsupportedToolChoiceError } from "../../src/types/errors.js";
+import { ServerError, AuthenticationError, RequestTimeoutError, ConfigurationError, UnsupportedToolChoiceError, StreamError } from "../../src/types/errors.js";
 
 function makeStreamEvents(text: string): StreamEvent[] {
   return [
@@ -47,6 +47,32 @@ describe("stream", () => {
     expect(collected).toHaveLength(5);
     expect(collected[0]?.type).toBe(StreamEventType.STREAM_START);
     expect(collected[2]?.type).toBe(StreamEventType.TEXT_DELTA);
+  });
+
+  test("rejects when both prompt and messages are provided", () => {
+    const adapter = new StubAdapter("stub", []);
+    const client = makeClient(adapter);
+
+    expect(() =>
+      stream({
+        model: "test-model",
+        prompt: "hello",
+        messages: [{ role: "user", content: [{ kind: "text", text: "hi" }] }],
+        client,
+      }),
+    ).toThrow(ConfigurationError);
+  });
+
+  test("rejects when neither prompt nor messages is provided", () => {
+    const adapter = new StubAdapter("stub", []);
+    const client = makeClient(adapter);
+
+    expect(() =>
+      stream({
+        model: "test-model",
+        client,
+      }),
+    ).toThrow(ConfigurationError);
   });
 
   test("textStream yields only text deltas", async () => {
@@ -266,7 +292,7 @@ describe("stream", () => {
         {
           name: "my_tool",
           description: "A tool",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "ok",
         },
       ],
@@ -308,6 +334,43 @@ describe("stream", () => {
     expect(adapter.calls).toHaveLength(3);
   });
 
+  test("emits ERROR event when stream fails after partial output", async () => {
+    const adapter = {
+      name: "stub",
+      async complete() {
+        throw new Error("not used");
+      },
+      async *stream(): AsyncGenerator<StreamEvent> {
+        yield { type: StreamEventType.STREAM_START, model: "test-model" };
+        yield { type: StreamEventType.TEXT_START };
+        yield { type: StreamEventType.TEXT_DELTA, delta: "hello" };
+        throw new Error("stream exploded");
+      },
+    };
+    const client = new Client({
+      providers: { stub: adapter },
+      defaultProvider: "stub",
+    });
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    const errorEvent = collected.find((e) => e.type === StreamEventType.ERROR);
+    expect(errorEvent?.type).toBe(StreamEventType.ERROR);
+    if (errorEvent?.type === StreamEventType.ERROR) {
+      expect(errorEvent.error).toBeInstanceOf(StreamError);
+      expect(errorEvent.error.message).toContain("stream exploded");
+    }
+  });
+
   test("stopWhen emits FINISH event before stopping", async () => {
     const toolCallEvents: StreamEvent[] = [
       { type: StreamEventType.STREAM_START, model: "test-model" },
@@ -345,7 +408,7 @@ describe("stream", () => {
         {
           name: "my_tool",
           description: "A tool",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "ok",
         },
       ],
@@ -469,7 +532,7 @@ describe("stream", () => {
         {
           name: "slow_tool",
           description: "A slow tool",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => {
             await new Promise((resolve) => setTimeout(resolve, 100));
             return "ok";
@@ -567,7 +630,7 @@ describe("stream", () => {
         {
           name: "passive_tool",
           description: "Passive",
-          parameters: {},
+          parameters: { type: "object" },
           // No execute handler
         },
       ],
@@ -624,7 +687,7 @@ describe("stream", () => {
         {
           name: "my_tool",
           description: "A tool",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "result",
         },
       ],
@@ -704,7 +767,7 @@ describe("stream", () => {
         {
           name: "known_tool",
           description: "Known",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => {
             knownToolCalled = true;
             return "ok";
@@ -771,7 +834,7 @@ describe("stream", () => {
         {
           name: "tool",
           description: "A tool",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "ok",
         },
       ],
@@ -833,7 +896,7 @@ describe("stream", () => {
         {
           name: "data_tool",
           description: "Returns object",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => {
             const data = { items: ["a", "b"], count: 2 };
             receivedData = data;

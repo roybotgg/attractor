@@ -1,6 +1,7 @@
 import type { Request } from "../../types/request.js";
 import type { Response } from "../../types/response.js";
 import type { StreamEvent } from "../../types/stream-event.js";
+import { StreamEventType } from "../../types/stream-event.js";
 import type { ProviderAdapter } from "../../types/provider-adapter.js";
 import type { AdapterTimeout } from "../../types/timeout.js";
 import {
@@ -18,7 +19,7 @@ import {
   RequestTimeoutError,
 } from "../../types/errors.js";
 import { classifyByMessage } from "../../utils/error-classify.js";
-import { httpRequest, httpRequestStream } from "../../utils/http.js";
+import { httpRequest, httpRequestStream, parseRetryAfterHeader } from "../../utils/http.js";
 import { parseSSE } from "../../utils/sse.js";
 import { str, rec } from "../../utils/extract.js";
 import { translateRequest } from "./request-translator.js";
@@ -73,12 +74,9 @@ function extractErrorCode(body: unknown): string | undefined {
 
 function extractRetryAfter(body: unknown, headers: Headers): number | undefined {
   // Prefer Retry-After header over body field
-  const headerValue = headers.get("retry-after");
-  if (headerValue !== null) {
-    const seconds = Number(headerValue);
-    if (!Number.isNaN(seconds) && seconds > 0) {
-      return seconds;
-    }
+  const fromHeader = parseRetryAfterHeader(headers);
+  if (fromHeader !== undefined) {
+    return fromHeader;
   }
   const obj = rec(body);
   if (obj) {
@@ -206,7 +204,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
   async *stream(request: Request): AsyncGenerator<StreamEvent> {
     const resolved = await resolveFileImages(request);
-    const { body, headers: extraHeaders } = translateRequest(resolved, true);
+    const { body, headers: extraHeaders, warnings } = translateRequest(resolved, true);
     const url = `${this.baseUrl}/v1/chat/completions`;
     const timeout = request.timeout ?? this.timeout;
 
@@ -222,7 +220,25 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     });
 
     const sseEvents = parseSSE(streamBody);
-    yield* translateStream(sseEvents);
+    let attachedWarnings = false;
+    for await (const event of translateStream(sseEvents)) {
+      if (!attachedWarnings && event.type === StreamEventType.STREAM_START) {
+        attachedWarnings = true;
+        if (warnings.length > 0) {
+          yield {
+            ...event,
+            warnings: [...(event.warnings ?? []), ...warnings],
+          };
+        } else {
+          yield event;
+        }
+        continue;
+      }
+      yield event;
+    }
+    if (!attachedWarnings && warnings.length > 0) {
+      yield { type: StreamEventType.STREAM_START, warnings };
+    }
   }
 
   supportsToolChoice(mode: string): boolean {

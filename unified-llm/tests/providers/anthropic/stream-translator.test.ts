@@ -336,21 +336,20 @@ describe("Anthropic stream translator", () => {
 
     expect(events.at(0)?.type).toBe(StreamEventType.STREAM_START);
     expect(events.at(1)?.type).toBe(StreamEventType.REASONING_START);
-    expect(events.at(2)?.type).toBe(StreamEventType.REASONING_END);
-    if (events.at(2)?.type === StreamEventType.REASONING_END) {
-      expect(events.at(2)).toEqual({
-        type: StreamEventType.REASONING_END,
-        signature: undefined,
-      });
-    }
-    expect(events.at(3)?.type).toBe(StreamEventType.TEXT_START);
-    expect(events.at(4)).toEqual({
+    expect(events.at(2)).toEqual({
+      type: StreamEventType.REASONING_DELTA,
+      reasoningDelta: "opaque-data",
+      redacted: true,
+    });
+    expect(events.at(3)?.type).toBe(StreamEventType.REASONING_END);
+    expect(events.at(4)?.type).toBe(StreamEventType.TEXT_START);
+    expect(events.at(5)).toEqual({
       type: StreamEventType.TEXT_DELTA,
       delta: "Answer",
       textId: "1",
     });
-    expect(events.at(5)?.type).toBe(StreamEventType.TEXT_END);
-    expect(events.at(6)?.type).toBe(StreamEventType.FINISH);
+    expect(events.at(6)?.type).toBe(StreamEventType.TEXT_END);
+    expect(events.at(7)?.type).toBe(StreamEventType.FINISH);
   });
 
   test("yields id from message_start", async () => {

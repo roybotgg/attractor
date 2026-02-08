@@ -1,6 +1,7 @@
 import type { Request } from "../../types/request.js";
 import type { Response } from "../../types/response.js";
 import type { StreamEvent } from "../../types/stream-event.js";
+import { StreamEventType } from "../../types/stream-event.js";
 import type { ProviderAdapter } from "../../types/provider-adapter.js";
 import type { AdapterTimeout } from "../../types/timeout.js";
 import {
@@ -200,7 +201,7 @@ export class OpenAIAdapter implements ProviderAdapter {
 
   async *stream(request: Request): AsyncGenerator<StreamEvent> {
     const resolved = await resolveFileImages(request);
-    const { body, headers: extraHeaders } = translateRequest(resolved, true);
+    const { body, headers: extraHeaders, warnings } = translateRequest(resolved, true);
     const url = `${this.baseUrl}/v1/responses`;
     const timeout = request.timeout ?? this.timeout;
 
@@ -216,7 +217,25 @@ export class OpenAIAdapter implements ProviderAdapter {
     });
 
     const sseEvents = parseSSE(streamBody);
-    yield* translateStream(sseEvents);
+    let attachedWarnings = false;
+    for await (const event of translateStream(sseEvents)) {
+      if (!attachedWarnings && event.type === StreamEventType.STREAM_START) {
+        attachedWarnings = true;
+        if (warnings.length > 0) {
+          yield {
+            ...event,
+            warnings: [...(event.warnings ?? []), ...warnings],
+          };
+        } else {
+          yield event;
+        }
+        continue;
+      }
+      yield event;
+    }
+    if (!attachedWarnings && warnings.length > 0) {
+      yield { type: StreamEventType.STREAM_START, warnings };
+    }
   }
 
   supportsToolChoice(mode: string): boolean {

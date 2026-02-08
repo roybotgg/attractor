@@ -41,12 +41,18 @@ interface ToolCallAccumulator {
   argumentsBuffer: string;
 }
 
+interface ReasoningSegment {
+  text: string;
+  redacted: boolean;
+  signature?: string;
+}
+
 export class StreamAccumulator {
   private textParts: string[] = [];
   private currentText = "";
-  private reasoningParts: string[] = [];
+  private reasoningSegments: ReasoningSegment[] = [];
   private currentReasoning = "";
-  private reasoningSignature?: string;
+  private currentReasoningRedacted = false;
   private toolCalls: Map<string, ToolCallAccumulator> = new Map();
   private completedToolCalls: ToolCallData[] = [];
   private streamId = "";
@@ -74,6 +80,9 @@ export class StreamAccumulator {
         if (event.id) {
           this.streamId = event.id;
         }
+        if (event.warnings && event.warnings.length > 0) {
+          this.warnings.push(...event.warnings);
+        }
         break;
 
       case StreamEventType.TEXT_START:
@@ -93,18 +102,28 @@ export class StreamAccumulator {
 
       case StreamEventType.REASONING_START:
         this.currentReasoning = "";
+        this.currentReasoningRedacted = false;
         break;
 
       case StreamEventType.REASONING_DELTA:
         this.currentReasoning += event.reasoningDelta;
+        if (event.redacted) {
+          this.currentReasoningRedacted = true;
+        }
         break;
 
       case StreamEventType.REASONING_END:
-        if (this.currentReasoning) {
-          this.reasoningParts.push(this.currentReasoning);
+        if (this.currentReasoning || this.currentReasoningRedacted) {
+          this.reasoningSegments.push({
+            text: this.currentReasoning,
+            redacted: this.currentReasoningRedacted,
+            signature: this.currentReasoningRedacted
+              ? undefined
+              : event.signature,
+          });
         }
-        this.reasoningSignature = event.signature;
         this.currentReasoning = "";
+        this.currentReasoningRedacted = false;
         break;
 
       case StreamEventType.TOOL_CALL_START:
@@ -167,16 +186,25 @@ export class StreamAccumulator {
     const content: ContentPart[] = [];
 
     // Add reasoning parts first
-    const fullReasoning = this.reasoningParts.join("");
-    if (fullReasoning) {
-      content.push({
-        kind: "thinking",
-        thinking: {
-          text: fullReasoning,
-          signature: this.reasoningSignature,
-          redacted: false,
-        },
-      });
+    for (const segment of this.reasoningSegments) {
+      if (segment.redacted) {
+        content.push({
+          kind: "redacted_thinking",
+          thinking: {
+            text: segment.text,
+            redacted: true,
+          },
+        });
+      } else {
+        content.push({
+          kind: "thinking",
+          thinking: {
+            text: segment.text,
+            signature: segment.signature,
+            redacted: false,
+          },
+        });
+      }
     }
 
     // Add text parts
@@ -215,9 +243,9 @@ export class StreamAccumulator {
   beginStep(): void {
     this.textParts = [];
     this.currentText = "";
-    this.reasoningParts = [];
+    this.reasoningSegments = [];
     this.currentReasoning = "";
-    this.reasoningSignature = undefined;
+    this.currentReasoningRedacted = false;
     this.toolCalls.clear();
     this.completedToolCalls = [];
     this.finishReason = { reason: "other" };

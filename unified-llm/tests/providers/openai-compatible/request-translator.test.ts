@@ -403,7 +403,7 @@ describe("OpenAI-Compatible Request Translator", () => {
           type: "object",
           properties: { name: { type: "string" } },
         },
-        strict: true,
+        strict: false,
       },
     });
   });

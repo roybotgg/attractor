@@ -88,6 +88,16 @@ export async function* translateStream(
           currentBlockType = "redacted_thinking";
           currentBlockIndex = blockIndex;
           yield { type: StreamEventType.REASONING_START };
+          const redactedData = typeof contentBlock["data"] === "string"
+            ? contentBlock["data"]
+            : "";
+          if (redactedData.length > 0) {
+            yield {
+              type: StreamEventType.REASONING_DELTA,
+              reasoningDelta: redactedData,
+              redacted: true,
+            };
+          }
         }
         break;
       }
@@ -111,11 +121,19 @@ export async function* translateStream(
           };
         } else if (deltaType === "thinking_delta") {
           const thinkingText = str(delta["thinking"]);
-          reasoningWordCount += thinkingText.split(/\s+/).filter(Boolean).length;
-          yield {
-            type: StreamEventType.REASONING_DELTA,
-            reasoningDelta: thinkingText,
-          };
+          if (currentBlockType === "redacted_thinking") {
+            yield {
+              type: StreamEventType.REASONING_DELTA,
+              reasoningDelta: thinkingText,
+              redacted: true,
+            };
+          } else {
+            reasoningWordCount += thinkingText.split(/\s+/).filter(Boolean).length;
+            yield {
+              type: StreamEventType.REASONING_DELTA,
+              reasoningDelta: thinkingText,
+            };
+          }
         }
         break;
       }

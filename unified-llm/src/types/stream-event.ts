@@ -56,6 +56,8 @@ export interface ReasoningStartEvent {
 export interface ReasoningDeltaEvent {
   type: typeof StreamEventType.REASONING_DELTA;
   reasoningDelta: string;
+  /** True when the delta comes from a redacted reasoning block. */
+  redacted?: boolean;
   raw?: unknown;
 }
 

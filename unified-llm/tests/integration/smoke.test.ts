@@ -3,21 +3,27 @@ import { generate, stream, generateObject, StreamEventType } from "../../src/ind
 import { Client } from "../../src/client/client.js";
 import { AnthropicAdapter } from "../../src/providers/anthropic/index.js";
 import { OpenAIAdapter } from "../../src/providers/openai/index.js";
+import { GeminiAdapter } from "../../src/providers/gemini/index.js";
 import { setDefaultClient } from "../../src/client/default-client.js";
 
 const anthropicKey = process.env["ANTHROPIC_API_KEY"];
 const openaiKey = process.env["OPENAI_API_KEY"];
+const geminiKey = process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"];
 
 const hasAnthropic = !!anthropicKey;
 const hasOpenAI = !!openaiKey;
+const hasGemini = !!geminiKey;
 
 function setupClient() {
-  const providers: Record<string, AnthropicAdapter | OpenAIAdapter> = {};
+  const providers: Record<string, AnthropicAdapter | OpenAIAdapter | GeminiAdapter> = {};
   if (anthropicKey) {
     providers["anthropic"] = new AnthropicAdapter({ apiKey: anthropicKey });
   }
   if (openaiKey) {
     providers["openai"] = new OpenAIAdapter({ apiKey: openaiKey });
+  }
+  if (geminiKey) {
+    providers["gemini"] = new GeminiAdapter({ apiKey: geminiKey });
   }
   const client = new Client({ providers });
   setDefaultClient(client);
@@ -249,6 +255,127 @@ describe.skipIf(!hasOpenAI)("OpenAI E2E", () => {
   }, 15000);
 });
 
+// ── Gemini Tests ──
+
+describe.skipIf(!hasGemini)("Gemini E2E", () => {
+  test("simple generation", async () => {
+    const result = await generate({
+      model: "gemini-3-flash-preview",
+      prompt: "Say hello in exactly 3 words.",
+      maxTokens: 50,
+      provider: "gemini",
+      client,
+    });
+
+    expect(result.text).toBeTruthy();
+    expect(result.text.length).toBeGreaterThan(0);
+    expect(result.finishReason.reason).toBe("stop");
+    expect(result.usage.inputTokens).toBeGreaterThan(0);
+    expect(result.usage.outputTokens).toBeGreaterThan(0);
+    console.log(`  Gemini gen: "${result.text}" (${result.usage.totalTokens} tokens)`);
+  }, 30000);
+
+  test("streaming", async () => {
+    const result = stream({
+      model: "gemini-3-flash-preview",
+      prompt: "Count from 1 to 5, one number per line.",
+      maxTokens: 100,
+      provider: "gemini",
+      client,
+    });
+
+    const chunks: string[] = [];
+    let sawStart = false;
+    let sawFinish = false;
+
+    for await (const event of result) {
+      if (event.type === StreamEventType.STREAM_START) sawStart = true;
+      if (event.type === StreamEventType.TEXT_DELTA) chunks.push(event.delta);
+      if (event.type === StreamEventType.FINISH) sawFinish = true;
+    }
+
+    const fullText = chunks.join("");
+    expect(sawStart).toBe(true);
+    expect(sawFinish).toBe(true);
+    expect(fullText.length).toBeGreaterThan(0);
+    expect(fullText).toContain("1");
+    console.log(`  Gemini stream: ${chunks.length} chunks, ${fullText.length} chars`);
+  }, 30000);
+
+  test("tool calling", async () => {
+    const result = await generate({
+      model: "gemini-3-flash-preview",
+      prompt: "What is the weather in Tokyo?",
+      maxTokens: 200,
+      provider: "gemini",
+      client,
+      tools: [
+        {
+          name: "get_weather",
+          description: "Get the current weather for a city",
+          parameters: {
+            type: "object",
+            properties: {
+              city: { type: "string", description: "City name" },
+            },
+            required: ["city"],
+          },
+          execute: async (args: Record<string, unknown>) => {
+            return `25°C and sunny in ${args["city"]}`;
+          },
+        },
+      ],
+      maxToolRounds: 3,
+    });
+
+    expect(result.text).toBeTruthy();
+    expect(result.steps.length).toBeGreaterThanOrEqual(2);
+    console.log(`  Gemini tools: ${result.steps.length} steps, "${result.text.slice(0, 80)}..."`);
+  }, 60000);
+
+  test("structured output", async () => {
+    const result = await generateObject({
+      model: "gemini-3-flash-preview",
+      prompt: "Extract: Alice is 30 years old and lives in Portland.",
+      maxTokens: 200,
+      provider: "gemini",
+      client,
+      schema: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          age: { type: "integer" },
+          city: { type: "string" },
+        },
+        required: ["name", "age", "city"],
+      },
+    });
+
+    expect(result.output).toBeTruthy();
+    const output = result.output as Record<string, unknown>;
+    expect(output["name"]).toBe("Alice");
+    expect(output["age"]).toBe(30);
+    expect(output["city"]).toBe("Portland");
+    console.log(`  Gemini structured: ${JSON.stringify(result.output)}`);
+  }, 30000);
+
+  test("error handling (invalid model)", async () => {
+    try {
+      await generate({
+        model: "nonexistent-model-xyz",
+        prompt: "test",
+        provider: "gemini",
+        client,
+        maxRetries: 0,
+      });
+      expect(true).toBe(false);
+    } catch (error) {
+      expect(error).toBeTruthy();
+      console.log(`  Gemini error: ${(error as Error).constructor.name}: ${(error as Error).message.slice(0, 80)}`);
+    }
+  }, 15000);
+});
+
 // ── Cross-Provider Tests ──
 
 describe.skipIf(!hasAnthropic || !hasOpenAI)("Cross-Provider E2E", () => {
@@ -286,5 +413,24 @@ describe.skipIf(!hasAnthropic || !hasOpenAI)("Cross-Provider E2E", () => {
     }
     expect(result.text).toBeTruthy();
     console.log(`  Fallback: ${result.response.provider} responded: "${result.text.slice(0, 50)}..."`);
+  }, 30000);
+});
+
+describe.skipIf(!hasAnthropic || !hasOpenAI || !hasGemini)("Cross-Provider E2E (All Providers)", () => {
+  test("same prompt, all providers", async () => {
+    const prompt = "What is 2 + 2? Answer with just the number.";
+
+    const [anthropicResult, openaiResult, geminiResult] = await Promise.all([
+      generate({ model: "claude-sonnet-4-5-20250929", prompt, maxTokens: 50, provider: "anthropic", client }),
+      generate({ model: "gpt-4.1-nano", prompt, maxTokens: 50, provider: "openai", client }),
+      generate({ model: "gemini-3-flash-preview", prompt, maxTokens: 50, provider: "gemini", client }),
+    ]);
+
+    expect(anthropicResult.text).toContain("4");
+    expect(openaiResult.text).toContain("4");
+    expect(geminiResult.text).toContain("4");
+    console.log(
+      `  Anthropic: "${anthropicResult.text.trim()}" | OpenAI: "${openaiResult.text.trim()}" | Gemini: "${geminiResult.text.trim()}"`,
+    );
   }, 30000);
 });

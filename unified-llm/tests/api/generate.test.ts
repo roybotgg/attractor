@@ -117,6 +117,18 @@ describe("generate", () => {
     ).rejects.toThrow(ConfigurationError);
   });
 
+  test("rejects when neither prompt nor messages is provided", async () => {
+    const adapter = new StubAdapter("stub", []);
+    setup(adapter);
+
+    await expect(
+      generate({
+        model: "test-model",
+        client,
+      }),
+    ).rejects.toThrow(ConfigurationError);
+  });
+
   test("tool loop: single round", async () => {
     const adapter = new StubAdapter("stub", [
       {
@@ -180,13 +192,13 @@ describe("generate", () => {
         {
           name: "step1",
           description: "Step 1",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "result1",
         },
         {
           name: "step2",
           description: "Step 2",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "result2",
         },
       ],
@@ -221,7 +233,7 @@ describe("generate", () => {
         {
           name: "loop_tool",
           description: "Loops",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "looped",
         },
       ],
@@ -257,7 +269,7 @@ describe("generate", () => {
         {
           name: "tool_a",
           description: "A",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => {
             executionOrder.push("a");
             return "result_a";
@@ -266,7 +278,7 @@ describe("generate", () => {
         {
           name: "tool_b",
           description: "B",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => {
             executionOrder.push("b");
             return "result_b";
@@ -301,7 +313,7 @@ describe("generate", () => {
         {
           name: "failing_tool",
           description: "Fails",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => {
             throw new Error("Tool failed");
           },
@@ -337,7 +349,7 @@ describe("generate", () => {
         {
           name: "tool",
           description: "A tool",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "ok",
         },
       ],
@@ -535,7 +547,7 @@ describe("generate", () => {
     ).rejects.toThrow(ConfigurationError);
   });
 
-  test("allows empty tool parameters (no root type check)", async () => {
+  test("accepts tool parameters with root type object", async () => {
     const adapter = new StubAdapter("stub", [
       { response: makeResponse("ok") },
     ]);
@@ -548,7 +560,7 @@ describe("generate", () => {
         {
           name: "empty_tool",
           description: "Empty params",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "done",
         },
       ],
@@ -667,7 +679,7 @@ describe("generate", () => {
         {
           name: "sig_tool",
           description: "Receives signal",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async (_args, context) => {
             receivedSignal = context?.abortSignal;
             return "ok";
@@ -719,7 +731,7 @@ describe("generate", () => {
           {
             name: "slow_tool",
             description: "A slow tool",
-            parameters: {},
+            parameters: { type: "object" },
             execute: async () => {
               await new Promise((resolve) => setTimeout(resolve, 100));
               return "ok";
@@ -821,13 +833,13 @@ describe("generate", () => {
         {
           name: "active_tool",
           description: "Active",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "executed",
         },
         {
           name: "passive_tool",
           description: "Passive",
-          parameters: {},
+          parameters: { type: "object" },
           // No execute handler
         },
       ],
@@ -862,7 +874,7 @@ describe("generate", () => {
         {
           name: "known_tool",
           description: "Known",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => "ok",
         },
       ],
@@ -905,7 +917,7 @@ describe("generate", () => {
         {
           name: "data_tool",
           description: "Returns structured data",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => ({ name: "Alice", age: 30, active: true }),
         },
       ],
@@ -937,7 +949,7 @@ describe("generate", () => {
         {
           name: "list_tool",
           description: "Returns array",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => ["item1", "item2", "item3"],
         },
       ],
@@ -969,7 +981,7 @@ describe("generate", () => {
         {
           name: "num_tool",
           description: "Returns number",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => 42,
         },
       ],
@@ -1012,19 +1024,19 @@ describe("generate", () => {
         {
           name: "tool_a",
           description: "A",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => { executionOrder.push("a"); return "result_a"; },
         },
         {
           name: "tool_b",
           description: "B",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => { executionOrder.push("b"); return "result_b"; },
         },
         {
           name: "tool_c",
           description: "C",
-          parameters: {},
+          parameters: { type: "object" },
           execute: async () => { executionOrder.push("c"); return "result_c"; },
         },
       ],

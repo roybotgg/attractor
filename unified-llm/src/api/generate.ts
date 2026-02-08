@@ -128,6 +128,9 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   if (options.prompt !== undefined && options.messages !== undefined) {
     throw new ConfigurationError("Cannot specify both 'prompt' and 'messages'");
   }
+  if (options.prompt === undefined && options.messages === undefined) {
+    throw new ConfigurationError("Must specify either 'prompt' or 'messages'");
+  }
 
   const client = options.client ?? getDefaultClient();
 
@@ -138,7 +141,7 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
         throw new ConfigurationError(`Invalid tool name "${tool.name}": ${nameError}`);
       }
       const params = tool.parameters;
-      if (params["type"] !== undefined && params["type"] !== "object") {
+      if (params["type"] !== "object") {
         throw new ConfigurationError(
           `Tool "${tool.name}" parameters must have "type": "object" at the root`,
         );
