@@ -93,11 +93,11 @@ describe("ReadOnlyExecutionEnvironment", () => {
     );
   });
 
-  test("execCommand throws with read-only error", async () => {
+  test("execCommand delegates to inner", async () => {
     const env = createReadOnly();
 
-    await expect(env.execCommand("echo hi", 5000)).rejects.toThrow(
-      "Write operations are disabled in read-only mode",
-    );
+    const result = await env.execCommand("echo hi", 5000);
+
+    expect(result.exitCode).toBe(0);
   });
 });

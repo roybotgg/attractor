@@ -99,7 +99,7 @@ describe("createAnthropicProfile", () => {
     expect(profileWithSubagents.tools().length).toBe(10);
   });
 
-  test("shell tool uses 10s default timeout", async () => {
+  test("shell tool uses 120s default timeout per Claude Code convention", async () => {
     const env = new StubExecutionEnvironment({
       commandResults: new Map([
         [
@@ -109,7 +109,7 @@ describe("createAnthropicProfile", () => {
             stderr: "",
             exitCode: 0,
             timedOut: true,
-            durationMs: 10_000,
+            durationMs: 120_000,
           },
         ],
       ]),
@@ -117,6 +117,6 @@ describe("createAnthropicProfile", () => {
     const shellTool = profile.toolRegistry.get("shell");
     expect(shellTool).toBeDefined();
     const result = await shellTool!.executor({ command: "test-cmd" }, env);
-    expect(result).toContain("timed out after 10000ms");
+    expect(result).toContain("timed out after 120000ms");
   });
 });

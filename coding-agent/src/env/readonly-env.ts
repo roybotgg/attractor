@@ -28,14 +28,14 @@ export class ReadOnlyExecutionEnvironment implements ExecutionEnvironment {
     return this.inner.listDirectory(path, depth);
   }
 
-  async execCommand(
-    _command: string,
-    _timeoutMs: number,
-    _workingDir?: string,
-    _envVars?: Record<string, string>,
-    _abortSignal?: AbortSignal,
+  execCommand(
+    command: string,
+    timeoutMs: number,
+    workingDir?: string,
+    envVars?: Record<string, string>,
+    abortSignal?: AbortSignal,
   ): Promise<ExecResult> {
-    throw new Error("Write operations are disabled in read-only mode");
+    return this.inner.execCommand(command, timeoutMs, workingDir, envVars, abortSignal);
   }
 
   grep(pattern: string, path: string, options?: GrepOptions): Promise<string> {
