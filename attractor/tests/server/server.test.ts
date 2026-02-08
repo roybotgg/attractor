@@ -139,6 +139,34 @@ describe("Attractor HTTP Server", () => {
     expect(cancelBody["status"]).toBe("cancelled");
   });
 
+  test("cancelled status is not overwritten when run promise resolves later", async () => {
+    const slowHandler: Handler = {
+      async execute() {
+        await Bun.sleep(300);
+        return createOutcome({ status: StageStatus.SUCCESS });
+      },
+    };
+    server = createServer({ runnerConfig: { handlerRegistry: makeRegistry(slowHandler) } });
+    const createRes = await fetch(`${baseUrl()}/pipelines`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dot: DOT_WITH_WORK }),
+    });
+    const createBody = (await createRes.json()) as Record<string, unknown>;
+    const id = String(createBody["id"]);
+
+    const cancelRes = await fetch(`${baseUrl()}/pipelines/${id}/cancel`, {
+      method: "POST",
+    });
+    expect(cancelRes.status).toBe(200);
+
+    await Bun.sleep(500);
+    const getRes = await fetch(`${baseUrl()}/pipelines/${id}`);
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as Record<string, unknown>;
+    expect(getBody["status"]).toBe("cancelled");
+  });
+
   test("GET /pipelines/:id/questions returns null when no pending question", async () => {
     server = createServer({ runnerConfig: { handlerRegistry: makeRegistry() } });
     const createRes = await fetch(`${baseUrl()}/pipelines`, {

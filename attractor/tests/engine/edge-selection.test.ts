@@ -117,7 +117,7 @@ describe("selectEdge", () => {
     expect(result?.to).toBe("B");
   });
 
-  test("step 2: preferred label matches edge even with failing condition (spec 3.3)", () => {
+  test("step 2: preferred label only matches eligible edges", () => {
     const nodeA = makeNode("A");
     const condFail = makeEdge("A", "B", {
       label: stringAttr("Yes"),
@@ -134,8 +134,7 @@ describe("selectEdge", () => {
       preferredLabel: "yes",
     });
     const result = selectEdge(nodeA, outcome, new Context(), graph);
-    // Spec 3.3: preferred label search spans ALL edges, not just eligible
-    expect(result?.to).toBe("B");
+    expect(result?.to).toBe("C");
   });
 
   test("step 2: preferred label with accelerator prefix", () => {

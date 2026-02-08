@@ -66,10 +66,10 @@ export function selectEdge(
     return evaluateCondition(condition, outcome, context);
   });
 
-  // Step 2: Preferred label match (search ALL edges per spec 3.3)
+  // Step 2: Preferred label match (eligible edges only)
   if (outcome.preferredLabel !== "") {
     const normalizedPreferred = normalizeLabel(outcome.preferredLabel);
-    for (const edge of edges) {
+    for (const edge of eligible) {
       const edgeLabel = getStringAttr(edge.attributes, "label");
       if (edgeLabel !== "" && normalizeLabel(edgeLabel) === normalizedPreferred) {
         return edge;

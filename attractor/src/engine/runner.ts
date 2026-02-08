@@ -16,15 +16,16 @@ import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, executeWithRetry } from "./retry.js";
 import { checkGoalGates, getRetryTarget } from "./goal-gates.js";
 import { saveCheckpoint, loadCheckpoint } from "./checkpoint.js";
-import { resolveFidelity } from "./fidelity.js";
+import { buildPreamble, resolveFidelity } from "./fidelity.js";
 import { validateOrRaise } from "../validation/validate.js";
-import { incomingEdges } from "../types/graph.js";
 import { builtInTransforms } from "../transforms/index.js";
-import { FidelityMode as FM } from "../types/fidelity.js";
-import { join } from "path";
-import { mkdir, writeFile } from "fs/promises";
+import { FidelityMode as FM, isValidFidelityMode } from "../types/fidelity.js";
+import { dirname, join } from "path";
+import { mkdir, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";
+import { ArtifactStore } from "../types/artifact.js";
+import { parseOutcomeFromStatusFile, statusFileFromOutcome } from "../utils/status-file.js";
 
 /** Shape-to-handler-type mapping from spec 2.8 */
 const SHAPE_TO_TYPE: Record<string, string> = {
@@ -103,18 +104,26 @@ export interface PipelineRunnerConfig {
   cxdbStore?: CxdbStore;
   /** Default model alias (for CXDB tracking). */
   model?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface PipelineResult {
   outcome: Outcome;
   completedNodes: string[];
   context: Context;
+  artifactStore: ArtifactStore;
 }
 
 function isTerminal(node: Node): boolean {
   const shape = getStringAttr(node.attributes, "shape");
   const nodeType = getStringAttr(node.attributes, "type");
-  return shape === "Msquare" || nodeType === "exit";
+  const lowerId = node.id.toLowerCase();
+  return (
+    shape === "Msquare" ||
+    nodeType === "exit" ||
+    lowerId === "exit" ||
+    lowerId === "end"
+  );
 }
 
 function findStartNode(graph: Graph): Node {
@@ -143,10 +152,13 @@ interface LoopState {
   nodeOutcomes: Map<string, Outcome>;
   nodeRetries: Map<string, number>;
   currentNode: Node;
+  currentIncomingEdge: Edge | undefined;
+  previousNodeId: string;
   lastOutcome: Outcome;
   restartCount: number;
   degradeNextFidelity: boolean;
   logsRoot: string;
+  artifactStore: ArtifactStore;
 }
 
 export class PipelineRunner {
@@ -198,10 +210,13 @@ export class PipelineRunner {
       nodeOutcomes: new Map(),
       nodeRetries: new Map(),
       currentNode: findStartNode(graph),
+      currentIncomingEdge: undefined,
+      previousNodeId: "",
       lastOutcome: createOutcome({ status: StageStatus.SUCCESS }),
       restartCount: 0,
       degradeNextFidelity: false,
       logsRoot,
+      artifactStore: new ArtifactStore({ baseDir: logsRoot }),
     };
 
     this.emitEvent(EventKind.PIPELINE_STARTED, { graphName: graph.name });
@@ -299,10 +314,13 @@ export class PipelineRunner {
       nodeOutcomes,
       nodeRetries,
       currentNode: nextNode,
+      currentIncomingEdge: nextEdge,
+      previousNodeId: checkpoint.currentNode,
       lastOutcome,
       restartCount: 0,
       degradeNextFidelity: context.getString("_fidelity.mode") === FM.FULL,
       logsRoot,
+      artifactStore: new ArtifactStore({ baseDir: logsRoot }),
     };
 
     this.emitEvent(EventKind.PIPELINE_STARTED, { graphName: graph.name });
@@ -312,12 +330,35 @@ export class PipelineRunner {
 
   private async executeLoop(graph: Graph, state: LoopState): Promise<PipelineResult> {
     let { context } = state;
-    const { completedNodes, nodeOutcomes, nodeRetries } = state;
-    let { currentNode, lastOutcome, restartCount, degradeNextFidelity } = state;
+    const { completedNodes, nodeOutcomes, nodeRetries, artifactStore } = state;
+    let {
+      currentNode,
+      currentIncomingEdge,
+      previousNodeId,
+      lastOutcome,
+      restartCount,
+      degradeNextFidelity,
+    } = state;
     const baseLogsRoot = state.logsRoot;
     let logsRoot = baseLogsRoot;
 
     while (true) {
+      // Check for cancellation via AbortSignal
+      if (this.config.abortSignal?.aborted) {
+        this.emitEvent(EventKind.PIPELINE_FAILED, {
+          reason: "Pipeline cancelled",
+        });
+        return {
+          outcome: createOutcome({
+            status: StageStatus.FAIL,
+            failureReason: "Pipeline cancelled",
+          }),
+          completedNodes,
+          context,
+          artifactStore,
+        };
+      }
+
       // Step 1: Check for terminal node
       if (isTerminal(currentNode)) {
         const gateResult = checkGoalGates(graph, nodeOutcomes);
@@ -326,6 +367,8 @@ export class PipelineRunner {
           if (retryTarget) {
             const targetNode = graph.nodes.get(retryTarget);
             if (targetNode) {
+              previousNodeId = currentNode.id;
+              currentIncomingEdge = undefined;
               currentNode = targetNode;
               continue;
             }
@@ -340,20 +383,54 @@ export class PipelineRunner {
             }),
             completedNodes,
             context,
+            artifactStore,
           };
         }
         break;
       }
 
+      // Resolve fidelity for the current node from the actual incoming edge.
+      const fidelityResult = resolveFidelity(
+        currentNode,
+        currentIncomingEdge,
+        graph,
+        previousNodeId,
+      );
+      context.set("_fidelity.mode", fidelityResult.mode);
+      context.set("_fidelity.threadId", fidelityResult.threadId);
+
       // Apply degraded fidelity for first node after resume
       if (degradeNextFidelity) {
         context.set("_fidelity.mode", FM.SUMMARY_HIGH);
+        context.set("_fidelity.threadId", "");
         degradeNextFidelity = false;
+      }
+
+      const fidelityModeRaw = context.getString("_fidelity.mode", FM.COMPACT);
+      const fidelityMode = isValidFidelityMode(fidelityModeRaw)
+        ? fidelityModeRaw
+        : FM.COMPACT;
+      context.set("_fidelity.preamble", "");
+      if (fidelityMode !== FM.FULL) {
+        const preamble = buildPreamble(
+          fidelityMode,
+          context,
+          completedNodes,
+          nodeOutcomes,
+          graph,
+        );
+        context.set("_fidelity.preamble", preamble);
       }
 
       // Step 2: Execute node handler with retry policy
       context.set("current_node", currentNode.id);
       this.emitEvent(EventKind.STAGE_STARTED, { nodeId: currentNode.id });
+      const statusPath = join(logsRoot, currentNode.id, "status.json");
+      try {
+        await unlink(statusPath);
+      } catch {
+        // No prior status file to clear.
+      }
 
       const handler = this.config.handlerRegistry.resolve(currentNode);
       if (!handler) {
@@ -365,7 +442,11 @@ export class PipelineRunner {
           nodeId: currentNode.id,
           reason: failOutcome.failureReason,
         });
-        return { outcome: failOutcome, completedNodes, context };
+        this.emitEvent(EventKind.PIPELINE_FAILED, {
+          reason: failOutcome.failureReason,
+          nodeId: currentNode.id,
+        });
+        return { outcome: failOutcome, completedNodes, context, artifactStore };
       }
 
       const retryPolicy = buildRetryPolicy(currentNode, graph);
@@ -411,11 +492,21 @@ export class PipelineRunner {
         retryResult = await retryExecution;
       }
 
-      // auto_status enforcement (spec 2.6/Appendix C)
       let outcome = retryResult.outcome;
+      const statusExists = existsSync(statusPath);
+
+      if (statusExists) {
+        try {
+          const content = await Bun.file(statusPath).text();
+          outcome = parseOutcomeFromStatusFile(content, outcome);
+        } catch {
+          // Keep handler outcome when status file cannot be parsed.
+        }
+      }
+
+      // auto_status enforcement (spec 2.6/Appendix C)
       if (getBooleanAttr(currentNode.attributes, "auto_status", false)) {
-        const statusPath = join(logsRoot, currentNode.id, "status.json");
-        if (!existsSync(statusPath)) {
+        if (!statusExists) {
           outcome = createOutcome({
             status: StageStatus.SUCCESS,
             notes: "auto-status: handler completed without writing status",
@@ -423,16 +514,26 @@ export class PipelineRunner {
         }
       }
 
+      await this.writeStatusSafe(statusPath, outcome);
+
       // Step 3: Record completion
       completedNodes.push(currentNode.id);
       nodeOutcomes.set(currentNode.id, outcome);
       nodeRetries.set(currentNode.id, retryResult.attempts);
       lastOutcome = outcome;
 
-      this.emitEvent(EventKind.STAGE_COMPLETED, {
-        nodeId: currentNode.id,
-        status: outcome.status,
-      });
+      if (outcome.status === StageStatus.FAIL) {
+        this.emitEvent(EventKind.STAGE_FAILED, {
+          nodeId: currentNode.id,
+          reason: outcome.failureReason,
+          willRetry: false,
+        });
+      } else {
+        this.emitEvent(EventKind.STAGE_COMPLETED, {
+          nodeId: currentNode.id,
+          status: outcome.status,
+        });
+      }
 
       // Track stage completion in CXDB
       const nodeModel = getStringAttr(currentNode.attributes, "model", "") || this.config.model || "";
@@ -496,6 +597,8 @@ export class PipelineRunner {
           if (failRetryTarget) {
             const targetNode = graph.nodes.get(failRetryTarget);
             if (targetNode) {
+              previousNodeId = currentNode.id;
+              currentIncomingEdge = undefined;
               currentNode = targetNode;
               continue;
             }
@@ -513,6 +616,7 @@ export class PipelineRunner {
               }),
               completedNodes,
               context,
+              artifactStore,
             };
           }
           // Otherwise follow the unconditional edge (step 6)
@@ -542,6 +646,10 @@ export class PipelineRunner {
         // Advance to target node
         const restartTarget = graph.nodes.get(nextEdge.to);
         if (!restartTarget) {
+          this.emitEvent(EventKind.PIPELINE_FAILED, {
+            reason: `loop_restart target node not found: ${nextEdge.to}`,
+            nodeId: currentNode.id,
+          });
           return {
             outcome: createOutcome({
               status: StageStatus.FAIL,
@@ -549,8 +657,11 @@ export class PipelineRunner {
             }),
             completedNodes,
             context,
+            artifactStore,
           };
         }
+        previousNodeId = "";
+        currentIncomingEdge = undefined;
         currentNode = restartTarget;
 
         this.emitEvent(EventKind.PIPELINE_RESTARTED, {
@@ -565,6 +676,10 @@ export class PipelineRunner {
       // Step 8: Advance to next node
       const nextNode = graph.nodes.get(nextEdge.to);
       if (!nextNode) {
+        this.emitEvent(EventKind.PIPELINE_FAILED, {
+          reason: `Edge target node not found: ${nextEdge.to}`,
+          nodeId: currentNode.id,
+        });
         return {
           outcome: createOutcome({
             status: StageStatus.FAIL,
@@ -572,16 +687,12 @@ export class PipelineRunner {
           }),
           completedNodes,
           context,
+          artifactStore,
         };
       }
 
-      // Step 8b: Resolve fidelity for next node
-      const nextIncomingEdges = incomingEdges(graph, nextNode.id);
-      const nextIncomingEdge = nextIncomingEdges.length > 0 ? nextIncomingEdges[0] : undefined;
-      const fidelityResult = resolveFidelity(nextNode, nextIncomingEdge, graph);
-      context.set("_fidelity.mode", fidelityResult.mode);
-      context.set("_fidelity.threadId", fidelityResult.threadId);
-
+      previousNodeId = currentNode.id;
+      currentIncomingEdge = nextEdge;
       currentNode = nextNode;
     }
 
@@ -614,12 +725,28 @@ export class PipelineRunner {
       }
     }
 
-    this.emitEvent(EventKind.PIPELINE_COMPLETED, {
-      completedNodes,
-      status: lastOutcome.status,
-    });
+    if (lastOutcome.status === StageStatus.FAIL) {
+      this.emitEvent(EventKind.PIPELINE_FAILED, {
+        reason: lastOutcome.failureReason || "Pipeline failed",
+      });
+    } else {
+      this.emitEvent(EventKind.PIPELINE_COMPLETED, {
+        completedNodes,
+        status: lastOutcome.status,
+      });
+    }
 
-    return { outcome: lastOutcome, completedNodes, context };
+    return { outcome: lastOutcome, completedNodes, context, artifactStore };
+  }
+
+  private async writeStatusSafe(path: string, outcome: Outcome): Promise<void> {
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      const content = JSON.stringify(statusFileFromOutcome(outcome), null, 2);
+      await writeFile(path, content, "utf-8");
+    } catch {
+      // Status write failure is non-fatal
+    }
   }
 
   private async saveCheckpointSafe(logsRoot: string, checkpoint: Checkpoint): Promise<void> {

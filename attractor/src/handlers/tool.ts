@@ -6,6 +6,7 @@ import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
 import { getStringAttr, getDurationAttr } from "../types/graph.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
+import { statusFileFromOutcome } from "../utils/status-file.js";
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -44,7 +45,10 @@ export class ToolHandler implements Handler {
             status: StageStatus.FAIL,
             failureReason: "Command exited with code " + String(exitCode) + ": " + stderr,
           });
-          await Bun.write(join(stageDir, "status.json"), JSON.stringify(failOutcome, null, 2));
+          await Bun.write(
+            join(stageDir, "status.json"),
+            JSON.stringify(statusFileFromOutcome(failOutcome), null, 2),
+          );
           return failOutcome;
         }
 
@@ -53,7 +57,10 @@ export class ToolHandler implements Handler {
           contextUpdates: { "tool.output": stdout },
           notes: "Tool completed: " + command,
         });
-        await Bun.write(join(stageDir, "status.json"), JSON.stringify(outcome, null, 2));
+        await Bun.write(
+          join(stageDir, "status.json"),
+          JSON.stringify(statusFileFromOutcome(outcome), null, 2),
+        );
         return outcome;
       } finally {
         clearTimeout(timeoutId);

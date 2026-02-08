@@ -1,4 +1,4 @@
-export type ContextValue = string | number | boolean;
+export type ContextValue = unknown;
 
 export class Context {
   private values: Map<string, ContextValue>;
