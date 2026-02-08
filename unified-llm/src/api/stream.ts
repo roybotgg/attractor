@@ -309,7 +309,19 @@ export function stream(options: StreamOptions): StreamResult {
           }
         });
 
-        const toolResults = await Promise.all(toolResultPromises);
+        const settled = await Promise.allSettled(toolResultPromises);
+        const toolResults = settled.map((result, i) => {
+          if (result.status === "fulfilled") {
+            return result.value;
+          }
+          const tc = rawToolCalls[i];
+          const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+          return {
+            toolCallId: tc?.id ?? "",
+            content: message,
+            isError: true,
+          };
+        });
 
         // Build step result for stopWhen check
         const step: StepResult = {

@@ -20,7 +20,7 @@ export async function* translateStream(
   let model: string | undefined;
   let messageId: string | undefined;
   let finishReason = "stop";
-  let reasoningTextLength = 0;
+  let reasoningWordCount = 0;
   let rawUsage: Record<string, unknown> = {};
 
   for await (const event of events) {
@@ -110,7 +110,7 @@ export async function* translateStream(
           };
         } else if (deltaType === "thinking_delta") {
           const thinkingText = str(delta["thinking"]);
-          reasoningTextLength += thinkingText.length;
+          reasoningWordCount += thinkingText.split(/\s+/).filter(Boolean).length;
           yield {
             type: StreamEventType.REASONING_DELTA,
             reasoningDelta: thinkingText,
@@ -157,7 +157,7 @@ export async function* translateStream(
           inputTokens,
           outputTokens,
           totalTokens: inputTokens + outputTokens,
-          reasoningTokens: reasoningTextLength > 0 ? Math.ceil(reasoningTextLength / 4) : undefined,
+          reasoningTokens: reasoningWordCount > 0 ? Math.ceil(reasoningWordCount * 1.3) : undefined,
           cacheReadTokens,
           cacheWriteTokens,
           raw: rawUsage,

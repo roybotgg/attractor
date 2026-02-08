@@ -492,7 +492,8 @@ describe("Anthropic stream translator", () => {
     const finish = events.find((e) => e.type === StreamEventType.FINISH);
     expect(finish?.type).toBe(StreamEventType.FINISH);
     if (finish?.type === StreamEventType.FINISH) {
-      expect(finish.usage?.reasoningTokens).toBe(Math.ceil(thinkingText.length / 4));
+      const wordCount = thinkingText.split(/\s+/).filter(Boolean).length;
+      expect(finish.usage?.reasoningTokens).toBe(Math.ceil(wordCount * 1.3));
       expect(finish.usage?.reasoningTokens).toBeGreaterThan(0);
     }
   });

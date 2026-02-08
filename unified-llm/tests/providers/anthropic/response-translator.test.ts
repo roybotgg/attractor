@@ -273,7 +273,8 @@ describe("Anthropic response translator", () => {
 
     const response = translateResponse(body);
 
-    expect(response.usage.reasoningTokens).toBe(Math.ceil(thinkingText.length / 4));
+    const wordCount = thinkingText.split(/\s+/).filter(Boolean).length;
+    expect(response.usage.reasoningTokens).toBe(Math.ceil(wordCount * 1.3));
     expect(response.usage.reasoningTokens).toBeGreaterThan(0);
   });
 });

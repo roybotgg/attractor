@@ -71,10 +71,10 @@ export function translateResponse(
     }
   }
 
-  let reasoningTextLength = 0;
+  let reasoningWordCount = 0;
   for (const part of parts) {
     if (part.kind === "thinking") {
-      reasoningTextLength += part.thinking.text.length;
+      reasoningWordCount += part.thinking.text.split(/\s+/).filter(Boolean).length;
     }
   }
 
@@ -89,7 +89,7 @@ export function translateResponse(
     inputTokens,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
-    reasoningTokens: reasoningTextLength > 0 ? Math.ceil(reasoningTextLength / 4) : undefined,
+    reasoningTokens: reasoningWordCount > 0 ? Math.ceil(reasoningWordCount * 1.3) : undefined,
     cacheReadTokens,
     cacheWriteTokens,
     raw: usageData,
