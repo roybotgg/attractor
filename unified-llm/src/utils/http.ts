@@ -18,6 +18,7 @@ export interface HttpRequestOptions {
     status: number,
     body: unknown,
     provider: string,
+    headers: Headers,
   ) => ProviderError | undefined;
   provider: string;
 }
@@ -61,7 +62,7 @@ export async function httpRequest(
   options: HttpRequestOptions,
 ): Promise<HttpResponse> {
   const controller = new AbortController();
-  const timeoutMs = options.timeout?.request ?? 60_000;
+  const timeoutMs = options.timeout?.request ?? 120_000;
 
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -98,6 +99,7 @@ export async function httpRequest(
           response.status,
           errorBody,
           options.provider,
+          response.headers,
         );
         if (mapped) {
           throw mapped;
@@ -144,7 +146,7 @@ export async function httpRequestStream(
   options: HttpRequestOptions,
 ): Promise<{ headers: Headers; body: ReadableStream<Uint8Array>; rateLimit?: RateLimitInfo }> {
   const controller = new AbortController();
-  const timeoutMs = options.timeout?.request ?? 60_000;
+  const timeoutMs = options.timeout?.request ?? 120_000;
 
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -183,6 +185,7 @@ export async function httpRequestStream(
           response.status,
           errorBody,
           options.provider,
+          response.headers,
         );
         if (mapped) {
           throw mapped;
@@ -204,7 +207,10 @@ export async function httpRequestStream(
       throw new NetworkError("Response body is null");
     }
 
-    return { headers: response.headers, body: response.body, rateLimit };
+    const streamReadTimeout = options.timeout?.streamRead ?? 30_000;
+    const wrappedBody = wrapWithStreamReadTimeout(response.body, streamReadTimeout);
+
+    return { headers: response.headers, body: wrappedBody, rateLimit };
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof ProviderError || error instanceof NetworkError) {
@@ -225,4 +231,56 @@ export async function httpRequestStream(
       `Unexpected error: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+interface ReadResult<T> {
+  done: boolean;
+  value: T | undefined;
+}
+
+function readWithTimeout<T>(
+  readPromise: Promise<ReadResult<T>>,
+  timeoutMs: number,
+): Promise<ReadResult<T>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new RequestTimeoutError("Stream read timeout"));
+    }, timeoutMs);
+    readPromise.then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+function wrapWithStreamReadTimeout(
+  body: ReadableStream<Uint8Array>,
+  timeoutMs: number,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await readWithTimeout(reader.read(), timeoutMs);
+        if (result.done) {
+          controller.close();
+        } else {
+          controller.enqueue(result.value);
+        }
+      } catch (err) {
+        reader.cancel().catch(() => {});
+        controller.error(err);
+      }
+    },
+    cancel() {
+      reader.cancel().catch(() => {});
+    },
+  });
 }

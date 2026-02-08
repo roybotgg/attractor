@@ -50,14 +50,38 @@ function translateContentPart(
       };
     }
     case "tool_result": {
-      const content =
+      const textContent =
         typeof part.toolResult.content === "string"
           ? part.toolResult.content
           : JSON.stringify(part.toolResult.content);
+
+      if (part.toolResult.imageData) {
+        const base64 = btoa(
+          String.fromCharCode(...part.toolResult.imageData),
+        );
+        const contentArray: Record<string, unknown>[] = [
+          { type: "text", text: textContent },
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: part.toolResult.imageMediaType ?? "image/png",
+              data: base64,
+            },
+          },
+        ];
+        return {
+          type: "tool_result",
+          tool_use_id: part.toolResult.toolCallId,
+          content: contentArray,
+          is_error: part.toolResult.isError,
+        };
+      }
+
       return {
         type: "tool_result",
         tool_use_id: part.toolResult.toolCallId,
-        content,
+        content: textContent,
         is_error: part.toolResult.isError,
       };
     }
@@ -217,6 +241,42 @@ export function translateRequest(request: Request): TranslatedRequest {
     const betaHeaders = anthropicOptions["betaHeaders"];
     if (typeof betaHeaders === "string") {
       headers["anthropic-beta"] = betaHeaders;
+    } else if (Array.isArray(betaHeaders)) {
+      const joined = betaHeaders
+        .filter((h): h is string => typeof h === "string")
+        .join(",");
+      if (joined.length > 0) {
+        headers["anthropic-beta"] = joined;
+      }
+    }
+  }
+
+  // M15: passthrough remaining providerOptions keys into body
+  if (anthropicOptions) {
+    const knownKeys = new Set(["thinking", "betaHeaders", "autoCache"]);
+    for (const [key, value] of Object.entries(anthropicOptions)) {
+      if (!knownKeys.has(key)) {
+        body[key] = value;
+      }
+    }
+  }
+
+  // M11: responseFormat fallback (Anthropic doesn't support native JSON mode)
+  if (request.responseFormat) {
+    let instruction: string | undefined;
+    if (request.responseFormat.type === "json_schema") {
+      const schemaText = JSON.stringify(request.responseFormat.jsonSchema, null, 2);
+      instruction = `Respond with valid JSON matching this schema:\n${schemaText}`;
+    } else if (request.responseFormat.type === "json") {
+      instruction = "Respond with valid JSON.";
+    }
+    if (instruction !== undefined) {
+      const block = { type: "text", text: instruction };
+      if (Array.isArray(body.system)) {
+        body.system = [...body.system, block];
+      } else {
+        body.system = [block];
+      }
     }
   }
 

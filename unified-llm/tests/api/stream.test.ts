@@ -4,16 +4,17 @@ import { Client } from "../../src/client/client.js";
 import { StubAdapter } from "../stubs/stub-adapter.js";
 import type { StreamEvent } from "../../src/types/stream-event.js";
 import { StreamEventType } from "../../src/types/stream-event.js";
+import { ServerError, AuthenticationError } from "../../src/types/errors.js";
 
 function makeStreamEvents(text: string): StreamEvent[] {
   return [
     { type: StreamEventType.STREAM_START, model: "test-model" },
     { type: StreamEventType.TEXT_START },
-    { type: StreamEventType.TEXT_DELTA, text },
+    { type: StreamEventType.TEXT_DELTA, delta: text },
     { type: StreamEventType.TEXT_END },
     {
       type: StreamEventType.FINISH,
-      finishReason: "stop",
+      finishReason: { reason: "stop" },
       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     },
   ];
@@ -109,12 +110,12 @@ describe("stream", () => {
     const events: StreamEvent[] = [
       { type: StreamEventType.STREAM_START, model: "test-model" },
       { type: StreamEventType.TEXT_START },
-      { type: StreamEventType.TEXT_DELTA, text: "Hello " },
-      { type: StreamEventType.TEXT_DELTA, text: "world" },
+      { type: StreamEventType.TEXT_DELTA, delta: "Hello " },
+      { type: StreamEventType.TEXT_DELTA, delta: "world" },
       { type: StreamEventType.TEXT_END },
       {
         type: StreamEventType.FINISH,
-        finishReason: "stop",
+        finishReason: { reason: "stop" },
         usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
       },
     ];
@@ -134,5 +135,118 @@ describe("stream", () => {
     }
 
     expect(texts).toEqual(["Hello ", "world"]);
+  });
+
+  test("partialResponse returns current state", async () => {
+    const events = makeStreamEvents("partial");
+    const adapter = new StubAdapter("stub", [{ events }]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      client,
+    });
+
+    // Before any iteration, partialResponse should return empty response
+    const partial = result.partialResponse();
+    expect(partial.finishReason.reason).toBe("other");
+
+    // Consume stream fully
+    await result.response();
+  });
+
+  test("FINISH event includes response object", async () => {
+    const events = makeStreamEvents("with-response");
+    const adapter = new StubAdapter("stub", [{ events }]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    const finish = collected.find((e) => e.type === StreamEventType.FINISH);
+    expect(finish?.type).toBe(StreamEventType.FINISH);
+    if (finish?.type === StreamEventType.FINISH) {
+      expect(finish.response).toBeDefined();
+      expect(finish.response?.finishReason.reason).toBe("stop");
+    }
+  });
+
+  test("retries on retryable connection error then succeeds", async () => {
+    const events = makeStreamEvents("retried");
+    const adapter = new StubAdapter("stub", [
+      { error: new ServerError("server down", "stub") },
+      { events },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      client,
+      maxRetries: 2,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    expect(collected).toHaveLength(5);
+    expect(adapter.calls).toHaveLength(2);
+  });
+
+  test("does not retry on non-retryable error", async () => {
+    const adapter = new StubAdapter("stub", [
+      { error: new AuthenticationError("bad key", "stub") },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      client,
+      maxRetries: 2,
+    });
+
+    await expect(async () => {
+      for await (const _event of result) {
+        // should not reach here
+      }
+    }).toThrow("bad key");
+
+    expect(adapter.calls).toHaveLength(1);
+  });
+
+  test("throws after max retries exhausted", async () => {
+    const adapter = new StubAdapter("stub", [
+      { error: new ServerError("fail 1", "stub") },
+      { error: new ServerError("fail 2", "stub") },
+      { error: new ServerError("fail 3", "stub") },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      client,
+      maxRetries: 2,
+    });
+
+    await expect(async () => {
+      for await (const _event of result) {
+        // should not reach here
+      }
+    }).toThrow("fail 3");
+
+    expect(adapter.calls).toHaveLength(3);
   });
 });

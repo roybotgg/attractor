@@ -58,18 +58,20 @@ describe("Anthropic stream translator", () => {
     expect(events.at(1)?.type).toBe(StreamEventType.TEXT_START);
     expect(events.at(2)).toEqual({
       type: StreamEventType.TEXT_DELTA,
-      text: "Hello",
+      delta: "Hello",
+      textId: "0",
     });
     expect(events.at(3)).toEqual({
       type: StreamEventType.TEXT_DELTA,
-      text: " world",
+      delta: " world",
+      textId: "0",
     });
     expect(events.at(4)?.type).toBe(StreamEventType.TEXT_END);
 
     const finish = events.at(5);
     expect(finish?.type).toBe(StreamEventType.FINISH);
     if (finish?.type === StreamEventType.FINISH) {
-      expect(finish.finishReason).toBe("stop");
+      expect(finish.finishReason).toEqual({ reason: "stop", raw: "end_turn" });
       expect(finish.usage?.inputTokens).toBe(10);
       expect(finish.usage?.outputTokens).toBe(5);
       expect(finish.usage?.totalTokens).toBe(15);
@@ -136,7 +138,7 @@ describe("Anthropic stream translator", () => {
     const finish = events.at(5);
     expect(finish?.type).toBe(StreamEventType.FINISH);
     if (finish?.type === StreamEventType.FINISH) {
-      expect(finish.finishReason).toBe("tool_calls");
+      expect(finish.finishReason).toEqual({ reason: "tool_calls", raw: "tool_use" });
     }
   });
 
@@ -182,13 +184,14 @@ describe("Anthropic stream translator", () => {
     expect(events.at(1)?.type).toBe(StreamEventType.REASONING_START);
     expect(events.at(2)).toEqual({
       type: StreamEventType.REASONING_DELTA,
-      text: "Let me think...",
+      reasoningDelta: "Let me think...",
     });
     expect(events.at(3)?.type).toBe(StreamEventType.REASONING_END);
     expect(events.at(4)?.type).toBe(StreamEventType.TEXT_START);
     expect(events.at(5)).toEqual({
       type: StreamEventType.TEXT_DELTA,
-      text: "Answer",
+      delta: "Answer",
+      textId: "1",
     });
     expect(events.at(6)?.type).toBe(StreamEventType.TEXT_END);
     expect(events.at(7)?.type).toBe(StreamEventType.FINISH);
@@ -233,7 +236,7 @@ describe("Anthropic stream translator", () => {
     const finish = events.at(-1);
     expect(finish?.type).toBe(StreamEventType.FINISH);
     if (finish?.type === StreamEventType.FINISH) {
-      expect(finish.finishReason).toBe("stop");
+      expect(finish.finishReason).toEqual({ reason: "stop", raw: "end_turn" });
       expect(finish.usage?.inputTokens).toBe(50);
       expect(finish.usage?.outputTokens).toBe(2);
       expect(finish.usage?.totalTokens).toBe(52);
@@ -260,6 +263,110 @@ describe("Anthropic stream translator", () => {
     expect(errorEvent?.type).toBe(StreamEventType.ERROR);
     if (errorEvent?.type === StreamEventType.ERROR) {
       expect(errorEvent.error.message).toBe("Server overloaded");
+    }
+  });
+
+  test("captures signature on REASONING_END for thinking blocks", async () => {
+    const sseEvents: SSEEvent[] = [
+      makeSSE({
+        type: "message_start",
+        message: { model: "claude-opus-4-6", usage: { input_tokens: 15 } },
+      }),
+      makeSSE({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "thinking", signature: "sig-abc-123" },
+      }),
+      makeSSE({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "thinking_delta", thinking: "Let me think..." },
+      }),
+      makeSSE({ type: "content_block_stop", index: 0 }),
+      makeSSE({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 10 },
+      }),
+      makeSSE({ type: "message_stop" }),
+    ];
+
+    const events = await collectEvents(sseEvents);
+
+    expect(events.at(1)?.type).toBe(StreamEventType.REASONING_START);
+    const reasoningEnd = events.at(3);
+    expect(reasoningEnd?.type).toBe(StreamEventType.REASONING_END);
+    if (reasoningEnd?.type === StreamEventType.REASONING_END) {
+      expect(reasoningEnd.signature).toBe("sig-abc-123");
+    }
+  });
+
+  test("handles redacted_thinking blocks in streaming", async () => {
+    const sseEvents: SSEEvent[] = [
+      makeSSE({
+        type: "message_start",
+        message: { model: "claude-opus-4-6", usage: { input_tokens: 10 } },
+      }),
+      makeSSE({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "redacted_thinking", data: "opaque-data" },
+      }),
+      makeSSE({ type: "content_block_stop", index: 0 }),
+      makeSSE({
+        type: "content_block_start",
+        index: 1,
+        content_block: { type: "text", text: "" },
+      }),
+      makeSSE({
+        type: "content_block_delta",
+        index: 1,
+        delta: { type: "text_delta", text: "Answer" },
+      }),
+      makeSSE({ type: "content_block_stop", index: 1 }),
+      makeSSE({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 5 },
+      }),
+      makeSSE({ type: "message_stop" }),
+    ];
+
+    const events = await collectEvents(sseEvents);
+
+    expect(events.at(0)?.type).toBe(StreamEventType.STREAM_START);
+    expect(events.at(1)?.type).toBe(StreamEventType.REASONING_START);
+    expect(events.at(2)?.type).toBe(StreamEventType.REASONING_END);
+    if (events.at(2)?.type === StreamEventType.REASONING_END) {
+      expect(events.at(2)).toEqual({
+        type: StreamEventType.REASONING_END,
+        signature: undefined,
+      });
+    }
+    expect(events.at(3)?.type).toBe(StreamEventType.TEXT_START);
+    expect(events.at(4)).toEqual({
+      type: StreamEventType.TEXT_DELTA,
+      delta: "Answer",
+      textId: "1",
+    });
+    expect(events.at(5)?.type).toBe(StreamEventType.TEXT_END);
+    expect(events.at(6)?.type).toBe(StreamEventType.FINISH);
+  });
+
+  test("yields id from message_start", async () => {
+    const sseEvents: SSEEvent[] = [
+      makeSSE({
+        type: "message_start",
+        message: { id: "msg_abc123", model: "claude-opus-4-6", usage: { input_tokens: 1 } },
+      }),
+    ];
+
+    const events = await collectEvents(sseEvents);
+
+    const start = events.at(0);
+    expect(start?.type).toBe(StreamEventType.STREAM_START);
+    if (start?.type === StreamEventType.STREAM_START) {
+      expect(start.id).toBe("msg_abc123");
     }
   });
 

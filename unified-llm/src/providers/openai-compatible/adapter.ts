@@ -17,15 +17,12 @@ import { httpRequest, httpRequestStream } from "../../utils/http.js";
 import { parseSSE } from "../../utils/sse.js";
 import { str, rec } from "../../utils/extract.js";
 import { translateRequest } from "./request-translator.js";
-import { resolveFileImages } from "../../utils/resolve-file-images.js";
 import { translateResponse } from "./response-translator.js";
 import { translateStream } from "./stream-translator.js";
 
-export interface OpenAIAdapterOptions {
-  apiKey: string;
-  baseUrl?: string;
-  orgId?: string;
-  projectId?: string;
+export interface OpenAICompatibleAdapterOptions {
+  baseUrl: string;
+  apiKey?: string;
   defaultHeaders?: Record<string, string>;
   timeout?: AdapterTimeout;
 }
@@ -41,15 +38,7 @@ function extractErrorMessage(body: unknown): string {
   return typeof body === "string" ? body : JSON.stringify(body);
 }
 
-function extractRetryAfter(body: unknown, headers: Headers): number | undefined {
-  // Prefer Retry-After header over body field
-  const headerValue = headers.get("retry-after");
-  if (headerValue !== null) {
-    const seconds = Number(headerValue);
-    if (!Number.isNaN(seconds) && seconds > 0) {
-      return seconds;
-    }
-  }
+function extractRetryAfter(body: unknown): number | undefined {
   const obj = rec(body);
   if (obj) {
     const errorObj = rec(obj["error"]);
@@ -64,7 +53,6 @@ function mapError(
   status: number,
   body: unknown,
   provider: string,
-  headers: Headers,
 ): ProviderError | undefined {
   const message = extractErrorMessage(body);
 
@@ -87,7 +75,7 @@ function mapError(
     case 404:
       return new NotFoundError(message, provider, body);
     case 429: {
-      const retryAfter = extractRetryAfter(body, headers);
+      const retryAfter = extractRetryAfter(body);
       return new RateLimitError(message, provider, retryAfter, body);
     }
     default:
@@ -98,20 +86,16 @@ function mapError(
   }
 }
 
-export class OpenAIAdapter implements ProviderAdapter {
-  readonly name = "openai";
-  private readonly apiKey: string;
+export class OpenAICompatibleAdapter implements ProviderAdapter {
+  readonly name = "openai-compatible";
   private readonly baseUrl: string;
-  private readonly orgId?: string;
-  private readonly projectId?: string;
+  private readonly apiKey: string | undefined;
   private readonly defaultHeaders: Record<string, string>;
   private readonly timeout?: AdapterTimeout;
 
-  constructor(options: OpenAIAdapterOptions) {
+  constructor(options: OpenAICompatibleAdapterOptions) {
+    this.baseUrl = options.baseUrl;
     this.apiKey = options.apiKey;
-    this.baseUrl = options.baseUrl ?? "https://api.openai.com";
-    this.orgId = options.orgId;
-    this.projectId = options.projectId;
     this.defaultHeaders = options.defaultHeaders ?? {};
     this.timeout = options.timeout;
   }
@@ -121,34 +105,27 @@ export class OpenAIAdapter implements ProviderAdapter {
   ): Record<string, string> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${this.apiKey}`,
       ...this.defaultHeaders,
       ...extraHeaders,
     };
 
-    if (this.orgId) {
-      headers["OpenAI-Organization"] = this.orgId;
-    }
-    if (this.projectId) {
-      headers["OpenAI-Project"] = this.projectId;
+    if (this.apiKey) {
+      headers["Authorization"] = `Bearer ${this.apiKey}`;
     }
 
     return headers;
   }
 
   async complete(request: Request): Promise<Response> {
-    const resolved = await resolveFileImages(request);
-    const { body, headers: extraHeaders } = translateRequest(resolved, false);
-    const url = `${this.baseUrl}/v1/responses`;
-    const timeout = request.timeout ?? this.timeout;
+    const { body, headers: extraHeaders } = translateRequest(request, false);
+    const url = `${this.baseUrl}/v1/chat/completions`;
 
     const httpResponse = await httpRequest({
       url,
       method: "POST",
       headers: this.buildHeaders(extraHeaders),
       body,
-      timeout,
-      signal: request.abortSignal,
+      timeout: this.timeout,
       mapError,
       provider: this.name,
     });
@@ -158,18 +135,15 @@ export class OpenAIAdapter implements ProviderAdapter {
   }
 
   async *stream(request: Request): AsyncGenerator<StreamEvent> {
-    const resolved = await resolveFileImages(request);
-    const { body, headers: extraHeaders } = translateRequest(resolved, true);
-    const url = `${this.baseUrl}/v1/responses`;
-    const timeout = request.timeout ?? this.timeout;
+    const { body, headers: extraHeaders } = translateRequest(request, true);
+    const url = `${this.baseUrl}/v1/chat/completions`;
 
     const { body: streamBody } = await httpRequestStream({
       url,
       method: "POST",
       headers: this.buildHeaders(extraHeaders),
       body,
-      timeout,
-      signal: request.abortSignal,
+      timeout: this.timeout,
       mapError,
       provider: this.name,
     });

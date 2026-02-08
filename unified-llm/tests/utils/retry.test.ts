@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { retry } from "../../src/utils/retry.js";
+import { retry, computeDelay } from "../../src/utils/retry.js";
 import type { RetryPolicy } from "../../src/utils/retry.js";
-import { SDKError, ServerError, InvalidRequestError } from "../../src/types/errors.js";
+import { SDKError, ServerError, InvalidRequestError, ProviderError } from "../../src/types/errors.js";
 
 describe("retry", () => {
   const fastPolicy: RetryPolicy = {
@@ -80,5 +80,70 @@ describe("retry", () => {
         throw "string error";
       }, fastPolicy),
     ).rejects.toBe("string error");
+  });
+
+  test("throws immediately when retryAfter exceeds maxDelay", async () => {
+    let attempts = 0;
+    const error = new ProviderError("rate limited", "test", {
+      retryable: true,
+      statusCode: 429,
+      retryAfter: 999,
+    });
+    await expect(
+      retry(async () => {
+        attempts++;
+        throw error;
+      }, { ...fastPolicy, maxDelay: 60 }),
+    ).rejects.toThrow("rate limited");
+    expect(attempts).toBe(1);
+  });
+});
+
+describe("computeDelay", () => {
+  const policy: RetryPolicy = {
+    maxRetries: 3,
+    baseDelay: 1.0,
+    maxDelay: 60.0,
+    backoffMultiplier: 2.0,
+    jitter: false,
+  };
+
+  test("returns retryAfter when within maxDelay", () => {
+    expect(computeDelay(0, policy, 5)).toBe(5);
+  });
+
+  test("returns -1 when retryAfter exceeds maxDelay", () => {
+    expect(computeDelay(0, policy, 100)).toBe(-1);
+  });
+
+  test("computes exponential backoff without jitter", () => {
+    expect(computeDelay(0, policy)).toBe(1.0);
+    expect(computeDelay(1, policy)).toBe(2.0);
+    expect(computeDelay(2, policy)).toBe(4.0);
+  });
+
+  test("caps delay at maxDelay", () => {
+    expect(computeDelay(10, policy)).toBe(60.0);
+  });
+
+  test("applies jitter in range [0.5, 1.5) of base delay", () => {
+    const jitterPolicy: RetryPolicy = { ...policy, jitter: true };
+    const results: number[] = [];
+    // Run multiple times to verify range
+    const baseDelay = 1.0; // attempt 0, backoff = 1.0
+    let allInRange = true;
+    let count = 0;
+    while (count < 100) {
+      const delay = computeDelay(0, jitterPolicy);
+      results.push(delay);
+      if (delay < baseDelay * 0.5 || delay >= baseDelay * 1.5) {
+        allInRange = false;
+      }
+      count++;
+    }
+    expect(allInRange).toBe(true);
+    // Verify we get some spread (not all the same value)
+    const unique = new Set(results.map((r) => Math.round(r * 100)));
+    expect(unique.size).toBeGreaterThan(1);
   });
 });

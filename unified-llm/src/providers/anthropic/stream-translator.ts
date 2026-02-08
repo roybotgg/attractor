@@ -1,21 +1,24 @@
 import type { StreamEvent } from "../../types/stream-event.js";
 import { StreamEventType } from "../../types/stream-event.js";
-import type { Usage } from "../../types/response.js";
+import type { FinishReason, Usage } from "../../types/response.js";
 import type { SSEEvent } from "../../utils/sse.js";
 import { str, num, optNum, rec } from "../../utils/extract.js";
 
-type BlockType = "text" | "tool_use" | "thinking";
+type BlockType = "text" | "tool_use" | "thinking" | "redacted_thinking";
 
 export async function* translateStream(
   events: AsyncGenerator<SSEEvent>,
 ): AsyncGenerator<StreamEvent> {
   let currentBlockType: BlockType | undefined;
+  let currentBlockIndex: string | undefined;
   let currentToolCallId = "";
+  let currentSignature: string | undefined;
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens: number | undefined;
   let cacheWriteTokens: number | undefined;
   let model: string | undefined;
+  let messageId: string | undefined;
   let finishReason = "stop";
 
   for await (const event of events) {
@@ -39,6 +42,7 @@ export async function* translateStream(
         const message = rec(parsed["message"]);
         if (message) {
           model = typeof message["model"] === "string" ? message["model"] : undefined;
+          messageId = typeof message["id"] === "string" ? message["id"] : undefined;
           const usage = rec(message["usage"]);
           if (usage) {
             inputTokens = num(usage["input_tokens"]);
@@ -46,7 +50,7 @@ export async function* translateStream(
             cacheWriteTokens = optNum(usage["cache_creation_input_tokens"]);
           }
         }
-        yield { type: StreamEventType.STREAM_START, model };
+        yield { type: StreamEventType.STREAM_START, id: messageId, model };
         break;
       }
 
@@ -54,12 +58,15 @@ export async function* translateStream(
         const contentBlock = rec(parsed["content_block"]);
         if (!contentBlock) break;
         const blockType = str(contentBlock["type"]);
+        const blockIndex = typeof parsed["index"] === "number" ? String(parsed["index"]) : undefined;
 
         if (blockType === "text") {
           currentBlockType = "text";
-          yield { type: StreamEventType.TEXT_START };
+          currentBlockIndex = blockIndex;
+          yield { type: StreamEventType.TEXT_START, textId: blockIndex };
         } else if (blockType === "tool_use") {
           currentBlockType = "tool_use";
+          currentBlockIndex = blockIndex;
           currentToolCallId = str(contentBlock["id"]);
           yield {
             type: StreamEventType.TOOL_CALL_START,
@@ -68,6 +75,14 @@ export async function* translateStream(
           };
         } else if (blockType === "thinking") {
           currentBlockType = "thinking";
+          currentBlockIndex = blockIndex;
+          currentSignature = typeof contentBlock["signature"] === "string"
+            ? contentBlock["signature"]
+            : undefined;
+          yield { type: StreamEventType.REASONING_START };
+        } else if (blockType === "redacted_thinking") {
+          currentBlockType = "redacted_thinking";
+          currentBlockIndex = blockIndex;
           yield { type: StreamEventType.REASONING_START };
         }
         break;
@@ -81,7 +96,8 @@ export async function* translateStream(
         if (deltaType === "text_delta") {
           yield {
             type: StreamEventType.TEXT_DELTA,
-            text: str(delta["text"]),
+            delta: str(delta["text"]),
+            textId: currentBlockIndex,
           };
         } else if (deltaType === "input_json_delta") {
           yield {
@@ -92,7 +108,7 @@ export async function* translateStream(
         } else if (deltaType === "thinking_delta") {
           yield {
             type: StreamEventType.REASONING_DELTA,
-            text: str(delta["thinking"]),
+            reasoningDelta: str(delta["thinking"]),
           };
         }
         break;
@@ -100,16 +116,18 @@ export async function* translateStream(
 
       case "content_block_stop": {
         if (currentBlockType === "text") {
-          yield { type: StreamEventType.TEXT_END };
+          yield { type: StreamEventType.TEXT_END, textId: currentBlockIndex };
         } else if (currentBlockType === "tool_use") {
           yield {
             type: StreamEventType.TOOL_CALL_END,
             toolCallId: currentToolCallId,
           };
-        } else if (currentBlockType === "thinking") {
-          yield { type: StreamEventType.REASONING_END };
+        } else if (currentBlockType === "thinking" || currentBlockType === "redacted_thinking") {
+          yield { type: StreamEventType.REASONING_END, signature: currentSignature };
+          currentSignature = undefined;
         }
         currentBlockType = undefined;
+        currentBlockIndex = undefined;
         break;
       }
 
@@ -157,16 +175,16 @@ export async function* translateStream(
   }
 }
 
-function mapFinishReason(reason: string): string {
+function mapFinishReason(reason: string): FinishReason {
   switch (reason) {
     case "end_turn":
     case "stop_sequence":
-      return "stop";
+      return { reason: "stop", raw: reason };
     case "max_tokens":
-      return "length";
+      return { reason: "length", raw: reason };
     case "tool_use":
-      return "tool_calls";
+      return { reason: "tool_calls", raw: reason };
     default:
-      return "other";
+      return { reason: "other", raw: reason };
   }
 }

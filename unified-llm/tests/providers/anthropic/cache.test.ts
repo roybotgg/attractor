@@ -130,6 +130,22 @@ describe("Anthropic cache control injection", () => {
     expect(body.system.at(0)?.cache_control).toBeUndefined();
   });
 
+  test("does not duplicate cache_control on already-marked blocks", () => {
+    const body = {
+      system: [
+        { type: "text", text: "System", cache_control: { type: "ephemeral" } },
+      ],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Hi" }] },
+      ],
+    };
+
+    const result = injectCacheControl(body);
+    const system = result.system as Array<Record<string, unknown>>;
+
+    expect(system.at(0)?.cache_control).toEqual({ type: "ephemeral" });
+  });
+
   test("handles body with only one message (no second-to-last)", () => {
     const body = {
       messages: [

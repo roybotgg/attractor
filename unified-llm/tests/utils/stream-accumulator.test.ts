@@ -8,12 +8,12 @@ describe("StreamAccumulator", () => {
     const acc = new StreamAccumulator();
     acc.process({ type: StreamEventType.STREAM_START, model: "test-model" });
     acc.process({ type: StreamEventType.TEXT_START });
-    acc.process({ type: StreamEventType.TEXT_DELTA, text: "Hello " });
-    acc.process({ type: StreamEventType.TEXT_DELTA, text: "world" });
+    acc.process({ type: StreamEventType.TEXT_DELTA, delta: "Hello " });
+    acc.process({ type: StreamEventType.TEXT_DELTA, delta: "world" });
     acc.process({ type: StreamEventType.TEXT_END });
     acc.process({
       type: StreamEventType.FINISH,
-      finishReason: "stop",
+      finishReason: { reason: "stop" },
       usage: {
         inputTokens: 10,
         outputTokens: 5,
@@ -55,7 +55,7 @@ describe("StreamAccumulator", () => {
     acc.process({ type: StreamEventType.TOOL_CALL_END, toolCallId: "tc-1" });
     acc.process({
       type: StreamEventType.FINISH,
-      finishReason: "tool_calls",
+      finishReason: { reason: "tool_calls" },
     });
 
     const response = acc.response();
@@ -75,16 +75,16 @@ describe("StreamAccumulator", () => {
     acc.process({ type: StreamEventType.REASONING_START });
     acc.process({
       type: StreamEventType.REASONING_DELTA,
-      text: "Let me think...",
+      reasoningDelta: "Let me think...",
     });
     acc.process({
       type: StreamEventType.REASONING_END,
       signature: "sig-123",
     });
     acc.process({ type: StreamEventType.TEXT_START });
-    acc.process({ type: StreamEventType.TEXT_DELTA, text: "Answer" });
+    acc.process({ type: StreamEventType.TEXT_DELTA, delta: "Answer" });
     acc.process({ type: StreamEventType.TEXT_END });
-    acc.process({ type: StreamEventType.FINISH, finishReason: "stop" });
+    acc.process({ type: StreamEventType.FINISH, finishReason: { reason: "stop" } });
 
     const response = acc.response();
     expect(response.message.content).toHaveLength(2);
@@ -106,7 +106,7 @@ describe("StreamAccumulator", () => {
     const acc = new StreamAccumulator();
     acc.process({ type: StreamEventType.STREAM_START, model: "test-model" });
     acc.process({ type: StreamEventType.TEXT_START });
-    acc.process({ type: StreamEventType.TEXT_DELTA, text: "I will search" });
+    acc.process({ type: StreamEventType.TEXT_DELTA, delta: "I will search" });
     acc.process({ type: StreamEventType.TEXT_END });
     acc.process({
       type: StreamEventType.TOOL_CALL_START,
@@ -121,12 +121,25 @@ describe("StreamAccumulator", () => {
     acc.process({ type: StreamEventType.TOOL_CALL_END, toolCallId: "tc-1" });
     acc.process({
       type: StreamEventType.FINISH,
-      finishReason: "tool_calls",
+      finishReason: { reason: "tool_calls" },
     });
 
     const response = acc.response();
     expect(response.message.content).toHaveLength(2);
     expect(response.message.content[0]?.kind).toBe("text");
     expect(response.message.content[1]?.kind).toBe("tool_call");
+  });
+
+  test("captures id and provider", () => {
+    const acc = new StreamAccumulator("anthropic");
+    acc.process({ type: StreamEventType.STREAM_START, id: "msg_123", model: "claude-opus-4-6" });
+    acc.process({ type: StreamEventType.TEXT_START });
+    acc.process({ type: StreamEventType.TEXT_DELTA, delta: "Hi" });
+    acc.process({ type: StreamEventType.TEXT_END });
+    acc.process({ type: StreamEventType.FINISH, finishReason: { reason: "stop" } });
+
+    const response = acc.response();
+    expect(response.id).toBe("msg_123");
+    expect(response.provider).toBe("anthropic");
   });
 });

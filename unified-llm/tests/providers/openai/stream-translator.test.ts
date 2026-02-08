@@ -59,13 +59,13 @@ describe("OpenAI Stream Translator", () => {
 
     expect(events[0]?.type).toBe(StreamEventType.STREAM_START);
     expect(events[1]?.type).toBe(StreamEventType.TEXT_START);
-    expect(events[2]).toEqual({
+    expect(events[2]).toMatchObject({
       type: StreamEventType.TEXT_DELTA,
-      text: "Hello",
+      delta: "Hello",
     });
-    expect(events[3]).toEqual({
+    expect(events[3]).toMatchObject({
       type: StreamEventType.TEXT_DELTA,
-      text: " world",
+      delta: " world",
     });
     expect(events[4]?.type).toBe(StreamEventType.TEXT_END);
     expect(events[5]?.type).toBe(StreamEventType.FINISH);
@@ -92,8 +92,8 @@ describe("OpenAI Stream Translator", () => {
     );
     expect(textStarts).toHaveLength(1);
     expect(events[0]?.type).toBe(StreamEventType.TEXT_START);
-    expect(events[1]).toEqual({ type: StreamEventType.TEXT_DELTA, text: "A" });
-    expect(events[2]).toEqual({ type: StreamEventType.TEXT_DELTA, text: "B" });
+    expect(events[1]).toMatchObject({ type: StreamEventType.TEXT_DELTA, delta: "A" });
+    expect(events[2]).toMatchObject({ type: StreamEventType.TEXT_DELTA, delta: "B" });
   });
 
   test("translates function call streaming events", async () => {
@@ -209,7 +209,7 @@ describe("OpenAI Stream Translator", () => {
 
     const finishEvent = events[events.length - 1];
     if (finishEvent?.type === StreamEventType.FINISH) {
-      expect(finishEvent.finishReason).toBe("tool_calls");
+      expect(finishEvent.finishReason.reason).toBe("tool_calls");
       expect(finishEvent.usage?.inputTokens).toBe(20);
       expect(finishEvent.usage?.outputTokens).toBe(40);
       expect(finishEvent.usage?.totalTokens).toBe(60);
@@ -237,15 +237,15 @@ describe("OpenAI Stream Translator", () => {
 
     const finish = events[0];
     if (finish?.type === StreamEventType.FINISH) {
-      expect(finish.finishReason).toBe("stop");
+      expect(finish.finishReason.reason).toBe("stop");
     }
   });
 
-  test("handles stream_start model extraction", async () => {
+  test("handles stream_start model and id extraction", async () => {
     const sseEvents: SSEEvent[] = [
       {
         event: "response.created",
-        data: JSON.stringify({ model: "gpt-4o-2024-11-20" }),
+        data: JSON.stringify({ id: "resp_abc", model: "gpt-4o-2024-11-20" }),
       },
     ];
 
@@ -256,6 +256,7 @@ describe("OpenAI Stream Translator", () => {
     const start = events[0];
     if (start?.type === StreamEventType.STREAM_START) {
       expect(start.model).toBe("gpt-4o-2024-11-20");
+      expect(start.id).toBe("resp_abc");
     }
   });
 });

@@ -10,6 +10,7 @@ import {
 } from "./middleware.js";
 import { AnthropicAdapter } from "../providers/anthropic/index.js";
 import { OpenAIAdapter } from "../providers/openai/index.js";
+import { OpenAICompatibleAdapter } from "../providers/openai-compatible/index.js";
 
 export interface ClientOptions {
   providers?: Record<string, ProviderAdapter>;
@@ -115,9 +116,20 @@ export class Client {
       );
     }
 
+    const compatBaseUrl = process.env["OPENAI_COMPATIBLE_BASE_URL"];
+    if (compatBaseUrl) {
+      client.registerProvider(
+        "openai-compatible",
+        new OpenAICompatibleAdapter({
+          baseUrl: compatBaseUrl,
+          apiKey: process.env["OPENAI_COMPATIBLE_API_KEY"],
+        }),
+      );
+    }
+
     if (client.providers.size === 0) {
       throw new ConfigurationError(
-        "No LLM provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.",
+        "No LLM provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENAI_COMPATIBLE_BASE_URL environment variable.",
       );
     }
 

@@ -62,7 +62,7 @@ describe.skipIf(!hasAnthropic)("Anthropic E2E", () => {
 
     for await (const event of result) {
       if (event.type === StreamEventType.STREAM_START) sawStart = true;
-      if (event.type === StreamEventType.TEXT_DELTA) chunks.push(event.text);
+      if (event.type === StreamEventType.TEXT_DELTA) chunks.push(event.delta);
       if (event.type === StreamEventType.FINISH) sawFinish = true;
     }
 
@@ -189,7 +189,7 @@ describe.skipIf(!hasOpenAI)("OpenAI E2E", () => {
 
     for await (const event of result) {
       if (event.type === StreamEventType.STREAM_START) sawStart = true;
-      if (event.type === StreamEventType.TEXT_DELTA) chunks.push(event.text);
+      if (event.type === StreamEventType.TEXT_DELTA) chunks.push(event.delta);
       if (event.type === StreamEventType.FINISH) sawFinish = true;
     }
 

@@ -31,7 +31,7 @@ const models: ModelInfo[] = [
     id: "gpt-5.2",
     provider: "openai",
     displayName: "GPT-5.2",
-    contextWindow: 128_000,
+    contextWindow: 1_047_576,
     maxOutput: 16_384,
     supportsTools: true,
     supportsVision: true,
@@ -44,7 +44,7 @@ const models: ModelInfo[] = [
     id: "gpt-5.2-mini",
     provider: "openai",
     displayName: "GPT-5.2 Mini",
-    contextWindow: 128_000,
+    contextWindow: 1_047_576,
     maxOutput: 16_384,
     supportsTools: true,
     supportsVision: true,
@@ -57,7 +57,7 @@ const models: ModelInfo[] = [
     id: "gpt-5.2-codex",
     provider: "openai",
     displayName: "GPT-5.2 Codex",
-    contextWindow: 128_000,
+    contextWindow: 1_047_576,
     maxOutput: 16_384,
     supportsTools: true,
     supportsVision: true,
@@ -83,7 +83,17 @@ export function listModels(provider?: string): ModelInfo[] {
   return [...models];
 }
 
-export function getLatestModel(provider: string): ModelInfo | undefined {
-  const providerModels = models.filter((m) => m.provider === provider);
-  return providerModels[0];
+export function getLatestModel(
+  provider: string,
+  capability?: "reasoning" | "vision" | "tools",
+): ModelInfo | undefined {
+  let filtered = models.filter((m) => m.provider === provider);
+  if (capability === "reasoning") {
+    filtered = filtered.filter((m) => m.supportsReasoning);
+  } else if (capability === "vision") {
+    filtered = filtered.filter((m) => m.supportsVision);
+  } else if (capability === "tools") {
+    filtered = filtered.filter((m) => m.supportsTools);
+  }
+  return filtered[0];
 }

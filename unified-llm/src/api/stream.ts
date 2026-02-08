@@ -4,12 +4,23 @@ import type { StreamEvent } from "../types/stream-event.js";
 import { StreamEventType } from "../types/stream-event.js";
 import type { Response } from "../types/response.js";
 import { responseToolCalls } from "../types/response.js";
+import type { AdapterTimeout } from "../types/timeout.js";
+import type { TimeoutConfig } from "../types/timeout.js";
 import { StreamAccumulator } from "../utils/stream-accumulator.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
-import { ConfigurationError } from "../types/errors.js";
+import { ConfigurationError, SDKError, ProviderError } from "../types/errors.js";
+import { computeDelay } from "../utils/retry.js";
 import type { GenerateOptions } from "./generate.js";
 import type { StreamResult } from "./types.js";
+
+function toAdapterTimeout(timeout: number | TimeoutConfig): AdapterTimeout {
+  if (typeof timeout === "number") {
+    return { connect: timeout, request: timeout, streamRead: timeout };
+  }
+  const ms = timeout.perStep ?? timeout.total ?? 120_000;
+  return { connect: ms, request: ms, streamRead: ms };
+}
 
 export type StreamOptions = GenerateOptions;
 
@@ -19,9 +30,11 @@ class StreamResultImpl implements StreamResult {
   private resolveResponse: ((response: Response) => void) | undefined;
   private iterationStarted = false;
   private generatorFn: () => AsyncGenerator<StreamEvent>;
+  private accumulator: StreamAccumulator;
 
-  constructor(generatorFn: () => AsyncGenerator<StreamEvent>) {
+  constructor(generatorFn: () => AsyncGenerator<StreamEvent>, provider: string) {
     this.generatorFn = generatorFn;
+    this.accumulator = new StreamAccumulator(provider);
     this.responsePromise = new Promise<Response>((resolve) => {
       this.resolveResponse = resolve;
     });
@@ -47,7 +60,7 @@ class StreamResultImpl implements StreamResult {
     this.iterationStarted = true;
     const self = this;
     const gen = this.generatorFn();
-    const accumulator = new StreamAccumulator();
+    const accumulator = this.accumulator;
     return {
       async next() {
         const result = await gen.next();
@@ -79,10 +92,14 @@ class StreamResultImpl implements StreamResult {
     return this.responsePromise;
   }
 
+  partialResponse(): Response {
+    return this.accumulator.response();
+  }
+
   async *textStream(): AsyncGenerator<string> {
     for await (const event of this) {
       if (event.type === StreamEventType.TEXT_DELTA) {
-        yield event.text;
+        yield event.delta;
       }
     }
   }
@@ -92,6 +109,8 @@ export function stream(options: StreamOptions): StreamResult {
   if (options.prompt !== undefined && options.messages !== undefined) {
     throw new ConfigurationError("Cannot specify both 'prompt' and 'messages'");
   }
+
+  const maxRetries = options.maxRetries ?? 2;
 
   const generatorFn = async function* (): AsyncGenerator<StreamEvent> {
     const messages: Message[] = [];
@@ -121,13 +140,74 @@ export function stream(options: StreamOptions): StreamResult {
         stopSequences: options.stopSequences,
         reasoningEffort: options.reasoningEffort,
         providerOptions: options.providerOptions,
+        timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout) : undefined,
+        abortSignal: options.abortSignal,
       };
 
-      const accumulator = new StreamAccumulator();
+      const accumulator = new StreamAccumulator(options.provider);
 
-      for await (const event of client.stream(request)) {
-        accumulator.process(event);
-        yield event;
+      // Retry the initial connection: wrap stream creation + first event read
+      // in a retry loop. Once the first event succeeds, no more retries.
+      let firstEvent: StreamEvent | undefined;
+      let connectedStream: AsyncGenerator<StreamEvent> | undefined;
+
+      const retryPolicy = {
+        maxRetries,
+        baseDelay: 1.0,
+        maxDelay: 60.0,
+        backoffMultiplier: 2.0,
+        jitter: true,
+      };
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const iter = client.stream(request);
+          const result = await iter.next();
+          if (!result.done) {
+            firstEvent = result.value;
+            connectedStream = iter;
+          }
+          break;
+        } catch (error) {
+          if (attempt >= maxRetries) {
+            throw error;
+          }
+          if (!(error instanceof Error)) {
+            throw error;
+          }
+          if (error instanceof SDKError && !error.retryable) {
+            throw error;
+          }
+
+          const retryAfter =
+            error instanceof ProviderError ? error.retryAfter : undefined;
+          const delay = computeDelay(attempt, retryPolicy, retryAfter);
+          if (delay < 0) {
+            throw error;
+          }
+          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+        }
+      }
+
+      // Yield the first event and remaining events
+      if (firstEvent) {
+        accumulator.process(firstEvent);
+        if (firstEvent.type === StreamEventType.FINISH) {
+          yield { ...firstEvent, response: accumulator.response() };
+        } else {
+          yield firstEvent;
+        }
+      }
+
+      if (connectedStream) {
+        for await (const event of connectedStream) {
+          accumulator.process(event);
+          if (event.type === StreamEventType.FINISH) {
+            yield { ...event, response: accumulator.response() };
+          } else {
+            yield event;
+          }
+        }
       }
 
       const response = accumulator.response();
@@ -139,6 +219,13 @@ export function stream(options: StreamOptions): StreamResult {
         options.tools.length > 0;
 
       if (hasToolCalls && round < maxToolRounds) {
+        // Emit STEP_FINISH between tool execution rounds
+        yield {
+          type: StreamEventType.STEP_FINISH,
+          finishReason: response.finishReason,
+          usage: response.usage,
+        };
+
         // Execute tool calls
         const toolResultPromises = rawToolCalls.map(async (tc) => {
           const toolDef = options.tools?.find((t) => t.name === tc.name);
@@ -174,5 +261,5 @@ export function stream(options: StreamOptions): StreamResult {
     }
   };
 
-  return new StreamResultImpl(generatorFn);
+  return new StreamResultImpl(generatorFn, options.provider ?? "");
 }

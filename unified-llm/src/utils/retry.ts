@@ -17,8 +17,11 @@ export const defaultRetryPolicy: RetryPolicy = {
   jitter: true,
 };
 
-function computeDelay(attempt: number, policy: RetryPolicy, retryAfter?: number): number {
+export function computeDelay(attempt: number, policy: RetryPolicy, retryAfter?: number): number {
   if (retryAfter !== undefined && retryAfter > 0) {
+    if (retryAfter > policy.maxDelay) {
+      return -1;
+    }
     return retryAfter;
   }
 
@@ -26,7 +29,7 @@ function computeDelay(attempt: number, policy: RetryPolicy, retryAfter?: number)
   delay = Math.min(delay, policy.maxDelay);
 
   if (policy.jitter) {
-    delay = delay * (0.5 + Math.random() * 0.5);
+    delay = delay * (0.5 + Math.random() * 1.0);
   }
 
   return delay;
@@ -60,6 +63,10 @@ export async function retry<T>(
         error instanceof ProviderError ? error.retryAfter : undefined;
 
       const delay = computeDelay(attempt, policy, retryAfter);
+
+      if (delay < 0) {
+        throw error;
+      }
 
       if (error instanceof SDKError && policy.onRetry) {
         policy.onRetry(error, attempt + 1, delay);

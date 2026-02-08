@@ -373,6 +373,189 @@ describe("Anthropic request translator", () => {
     expect(headers["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
   });
 
+  test("joins array betaHeaders with commas", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      providerOptions: {
+        anthropic: {
+          betaHeaders: ["prompt-caching-2024-07-31", "extended-thinking-2025-01-24"],
+        },
+      },
+    };
+
+    const { headers } = translateRequest(request);
+
+    expect(headers["anthropic-beta"]).toBe(
+      "prompt-caching-2024-07-31,extended-thinking-2025-01-24",
+    );
+  });
+
+  test("passes unknown providerOptions keys through to body", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      providerOptions: {
+        anthropic: {
+          metadata: { user_id: "u123" },
+          top_k: 5,
+        },
+      },
+    };
+
+    const { body } = translateRequest(request);
+
+    expect(body.metadata).toEqual({ user_id: "u123" });
+    expect(body.top_k).toBe(5);
+  });
+
+  test("does not pass known providerOptions keys to body", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      providerOptions: {
+        anthropic: {
+          thinking: { type: "enabled", budget_tokens: 5000 },
+          betaHeaders: "some-beta",
+          autoCache: false,
+        },
+      },
+    };
+
+    const { body } = translateRequest(request);
+
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 5000 });
+    expect(body.betaHeaders).toBeUndefined();
+    expect(body.autoCache).toBeUndefined();
+  });
+
+  test("injects JSON schema instructions into system for json_schema responseFormat", () => {
+    const schema = { type: "object", properties: { name: { type: "string" } } };
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      responseFormat: { type: "json_schema", jsonSchema: schema },
+    };
+
+    const { body } = translateRequest(request);
+    const system = body.system as Array<Record<string, unknown>>;
+
+    expect(system).toHaveLength(1);
+    const text = system.at(0)?.text;
+    expect(typeof text).toBe("string");
+    expect(text).toContain("Respond with valid JSON matching this schema:");
+    expect(text).toContain('"name"');
+  });
+
+  test("appends JSON schema instructions after existing system blocks", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.SYSTEM, content: [{ kind: "text", text: "Be helpful" }] },
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      responseFormat: { type: "json_schema", jsonSchema: { type: "object" } },
+    };
+
+    const { body } = translateRequest(request);
+    const system = body.system as Array<Record<string, unknown>>;
+
+    expect(system).toHaveLength(2);
+    expect(system.at(0)?.text).toBe("Be helpful");
+    expect(system.at(1)?.text).toContain("Respond with valid JSON");
+  });
+
+  test("injects plain JSON instruction for json responseFormat", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      responseFormat: { type: "json" },
+    };
+
+    const { body } = translateRequest(request);
+    const system = body.system as Array<Record<string, unknown>>;
+
+    expect(system).toHaveLength(1);
+    expect(system.at(0)?.text).toBe("Respond with valid JSON.");
+  });
+
+  test("does not inject system for text responseFormat", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      responseFormat: { type: "text" },
+    };
+
+    const { body } = translateRequest(request);
+
+    expect(body.system).toBeUndefined();
+  });
+
+  test("translates tool result with image data", () => {
+    const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Screenshot?" }] },
+        {
+          role: Role.ASSISTANT,
+          content: [
+            {
+              kind: "tool_call",
+              toolCall: { id: "tc1", name: "screenshot", arguments: {} },
+            },
+          ],
+        },
+        {
+          role: Role.TOOL,
+          content: [
+            {
+              kind: "tool_result",
+              toolResult: {
+                toolCallId: "tc1",
+                content: "Here is the screenshot",
+                isError: false,
+                imageData: imageBytes,
+                imageMediaType: "image/jpeg",
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const { body } = translateRequest(request);
+    const messages = body.messages as Array<{
+      role: string;
+      content: Array<Record<string, unknown>>;
+    }>;
+    const toolMsg = messages.at(2);
+    const toolResult = toolMsg?.content.at(0);
+
+    expect(toolResult?.type).toBe("tool_result");
+    const content = toolResult?.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(2);
+    expect(content.at(0)?.type).toBe("text");
+    expect(content.at(0)?.text).toBe("Here is the screenshot");
+    expect(content.at(1)?.type).toBe("image");
+    const source = content.at(1)?.source as Record<string, unknown>;
+    expect(source?.type).toBe("base64");
+    expect(source?.media_type).toBe("image/jpeg");
+    expect(typeof source?.data).toBe("string");
+  });
+
   test("translates redacted thinking blocks", () => {
     const request: Request = {
       model: "claude-opus-4-6",

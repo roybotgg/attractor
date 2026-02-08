@@ -136,8 +136,8 @@ describe("Client", () => {
       {
         events: [
           { type: StreamEventType.STREAM_START, model: "test" },
-          { type: StreamEventType.TEXT_DELTA, text: "hello" },
-          { type: StreamEventType.FINISH, finishReason: "stop" },
+          { type: StreamEventType.TEXT_DELTA, delta: "hello" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
         ],
       },
     ]);

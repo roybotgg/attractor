@@ -19,7 +19,9 @@ export class StreamAccumulator {
   private reasoningSignature?: string;
   private toolCalls: Map<string, ToolCallAccumulator> = new Map();
   private completedToolCalls: ToolCallData[] = [];
+  private streamId = "";
   private model = "";
+  private provider: string;
   private finishReason: FinishReason = { reason: "other" };
   private usage: Usage = {
     inputTokens: 0,
@@ -27,11 +29,18 @@ export class StreamAccumulator {
     totalTokens: 0,
   };
 
+  constructor(provider = "") {
+    this.provider = provider;
+  }
+
   process(event: StreamEvent): void {
     switch (event.type) {
       case StreamEventType.STREAM_START:
         if (event.model) {
           this.model = event.model;
+        }
+        if (event.id) {
+          this.streamId = event.id;
         }
         break;
 
@@ -40,7 +49,7 @@ export class StreamAccumulator {
         break;
 
       case StreamEventType.TEXT_DELTA:
-        this.currentText += event.text;
+        this.currentText += event.delta;
         break;
 
       case StreamEventType.TEXT_END:
@@ -55,7 +64,7 @@ export class StreamAccumulator {
         break;
 
       case StreamEventType.REASONING_DELTA:
-        this.currentReasoning += event.text;
+        this.currentReasoning += event.reasoningDelta;
         break;
 
       case StreamEventType.REASONING_END:
@@ -103,18 +112,14 @@ export class StreamAccumulator {
       }
 
       case StreamEventType.FINISH: {
-        const validReasons = ["stop", "length", "tool_calls", "content_filter", "error", "other"] as const;
-        const matched = validReasons.find((r) => r === event.finishReason);
-        this.finishReason = {
-          reason: matched ?? "other",
-          raw: event.finishReason,
-        };
+        this.finishReason = event.finishReason;
         if (event.usage) {
           this.usage = event.usage;
         }
         break;
       }
 
+      case StreamEventType.STEP_FINISH:
       case StreamEventType.ERROR:
       case StreamEventType.PROVIDER_EVENT:
         // No accumulation needed
@@ -154,9 +159,9 @@ export class StreamAccumulator {
     }
 
     return {
-      id: "",
+      id: this.streamId,
       model: this.model,
-      provider: "",
+      provider: this.provider,
       message: {
         role: Role.ASSISTANT,
         content,

@@ -1,19 +1,19 @@
 import type { SSEEvent } from "../../utils/sse.js";
 import type { StreamEvent } from "../../types/stream-event.js";
-import type { Usage } from "../../types/response.js";
+import type { FinishReason, Usage } from "../../types/response.js";
 import { StreamEventType } from "../../types/stream-event.js";
 import { str, num, rec, recArray } from "../../utils/extract.js";
 
-function mapFinishReason(status: string): string {
+function mapFinishReason(status: string): FinishReason {
   switch (status) {
     case "completed":
-      return "stop";
+      return { reason: "stop", raw: status };
     case "incomplete":
-      return "length";
+      return { reason: "length", raw: status };
     case "failed":
-      return "error";
+      return { reason: "error", raw: status };
     default:
-      return "other";
+      return { reason: "other", raw: status };
   }
 }
 
@@ -50,6 +50,8 @@ export async function* translateStream(
   events: AsyncGenerator<SSEEvent>,
 ): AsyncGenerator<StreamEvent> {
   let textStarted = false;
+  let currentTextId: string | undefined;
+  let responseId: string | undefined;
 
   for await (const sse of events) {
     let parsed: Record<string, unknown> | undefined;
@@ -65,18 +67,23 @@ export async function* translateStream(
       case "response.created": {
         const model =
           typeof parsed["model"] === "string" ? parsed["model"] : undefined;
-        yield { type: StreamEventType.STREAM_START, model };
+        responseId = typeof parsed["id"] === "string" ? parsed["id"] : undefined;
+        yield { type: StreamEventType.STREAM_START, id: responseId, model };
         break;
       }
 
       case "response.output_text.delta": {
+        const itemIndex = typeof parsed["output_index"] === "number"
+          ? String(parsed["output_index"])
+          : undefined;
         if (!textStarted) {
           textStarted = true;
-          yield { type: StreamEventType.TEXT_START };
+          currentTextId = itemIndex;
+          yield { type: StreamEventType.TEXT_START, textId: currentTextId };
         }
         const delta =
           typeof parsed["delta"] === "string" ? parsed["delta"] : "";
-        yield { type: StreamEventType.TEXT_DELTA, text: delta };
+        yield { type: StreamEventType.TEXT_DELTA, delta, textId: currentTextId };
         break;
       }
 
@@ -111,7 +118,8 @@ export async function* translateStream(
         const doneType = str(doneItem["type"]);
         if (doneType === "output_text") {
           textStarted = false;
-          yield { type: StreamEventType.TEXT_END };
+          yield { type: StreamEventType.TEXT_END, textId: currentTextId };
+          currentTextId = undefined;
         } else if (doneType === "function_call") {
           yield {
             type: StreamEventType.TOOL_CALL_END,
@@ -130,8 +138,8 @@ export async function* translateStream(
         const hasToolCalls = outputItems.some(
           (item) => str(item["type"]) === "function_call",
         );
-        const finishReason = hasToolCalls
-          ? "tool_calls"
+        const finishReason: FinishReason = hasToolCalls
+          ? { reason: "tool_calls", raw: status }
           : mapFinishReason(status);
 
         yield {

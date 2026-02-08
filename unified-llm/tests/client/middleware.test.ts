@@ -109,8 +109,8 @@ describe("buildStreamMiddlewareChain", () => {
   test("stream middleware passes events through", async () => {
     const events: StreamEvent[] = [
       { type: StreamEventType.STREAM_START, model: "test" },
-      { type: StreamEventType.TEXT_DELTA, text: "hello" },
-      { type: StreamEventType.FINISH, finishReason: "stop" },
+      { type: StreamEventType.TEXT_DELTA, delta: "hello" },
+      { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
     ];
 
     const handler = async function* (_req: Request): AsyncGenerator<StreamEvent> {
@@ -131,8 +131,8 @@ describe("buildStreamMiddlewareChain", () => {
   test("stream middleware can intercept events", async () => {
     const events: StreamEvent[] = [
       { type: StreamEventType.STREAM_START, model: "test" },
-      { type: StreamEventType.TEXT_DELTA, text: "hello" },
-      { type: StreamEventType.FINISH, finishReason: "stop" },
+      { type: StreamEventType.TEXT_DELTA, delta: "hello" },
+      { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
     ];
 
     const handler = async function* (_req: Request): AsyncGenerator<StreamEvent> {
@@ -144,7 +144,7 @@ describe("buildStreamMiddlewareChain", () => {
     const mw: StreamMiddleware = async function* (req, next) {
       for await (const event of next(req)) {
         if (event.type === StreamEventType.TEXT_DELTA) {
-          yield { ...event, text: event.text.toUpperCase() };
+          yield { ...event, delta: event.delta.toUpperCase() };
         } else {
           yield event;
         }
@@ -159,7 +159,7 @@ describe("buildStreamMiddlewareChain", () => {
 
     expect(collected[1]).toEqual({
       type: StreamEventType.TEXT_DELTA,
-      text: "HELLO",
+      delta: "HELLO",
     });
   });
 });

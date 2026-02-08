@@ -29,6 +29,11 @@ describe("getModelInfo", () => {
     expect(model).toBeDefined();
     expect(model?.provider).toBe("openai");
   });
+
+  test("OpenAI models have correct context window", () => {
+    const model = getModelInfo("gpt-5.2");
+    expect(model?.contextWindow).toBe(1_047_576);
+  });
 });
 
 describe("listModels", () => {
@@ -69,5 +74,23 @@ describe("getLatestModel", () => {
   test("returns undefined for unknown provider", () => {
     const model = getLatestModel("unknown");
     expect(model).toBeUndefined();
+  });
+
+  test("filters by reasoning capability", () => {
+    const model = getLatestModel("anthropic", "reasoning");
+    expect(model).toBeDefined();
+    expect(model?.supportsReasoning).toBe(true);
+  });
+
+  test("filters by vision capability", () => {
+    const model = getLatestModel("openai", "vision");
+    expect(model).toBeDefined();
+    expect(model?.supportsVision).toBe(true);
+  });
+
+  test("filters by tools capability", () => {
+    const model = getLatestModel("anthropic", "tools");
+    expect(model).toBeDefined();
+    expect(model?.supportsTools).toBe(true);
   });
 });

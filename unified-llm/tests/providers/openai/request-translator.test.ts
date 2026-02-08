@@ -372,4 +372,227 @@ describe("OpenAI Request Translator", () => {
       content: [{ type: "output_text", text: "I can help with that." }],
     });
   });
+
+  test("M16: sets status error on tool result when isError is true", () => {
+    const request = makeRequest({
+      messages: [
+        {
+          role: Role.TOOL,
+          content: [
+            {
+              kind: "tool_result",
+              toolResult: {
+                toolCallId: "call_err",
+                content: "Something went wrong",
+                isError: true,
+              },
+            },
+          ],
+          toolCallId: "call_err",
+        },
+      ],
+    });
+
+    const { body } = translateRequest(request, false);
+    const input = body.input as Array<Record<string, unknown>>;
+
+    expect(input[0]).toEqual({
+      type: "function_call_output",
+      call_id: "call_err",
+      output: "Something went wrong",
+      status: "error",
+    });
+  });
+
+  test("M16: omits status when isError is false", () => {
+    const request = makeRequest({
+      messages: [
+        {
+          role: Role.TOOL,
+          content: [
+            {
+              kind: "tool_result",
+              toolResult: {
+                toolCallId: "call_ok",
+                content: "All good",
+                isError: false,
+              },
+            },
+          ],
+          toolCallId: "call_ok",
+        },
+      ],
+    });
+
+    const { body } = translateRequest(request, false);
+    const input = body.input as Array<Record<string, unknown>>;
+
+    expect(input[0]).toEqual({
+      type: "function_call_output",
+      call_id: "call_ok",
+      output: "All good",
+    });
+  });
+
+  test("M17: passes through image detail field", () => {
+    const request = makeRequest({
+      messages: [
+        {
+          role: Role.USER,
+          content: [
+            {
+              kind: "image",
+              image: { url: "https://example.com/img.png", detail: "high" },
+            },
+          ],
+        },
+      ],
+    });
+
+    const { body } = translateRequest(request, false);
+    const input = body.input as Array<Record<string, unknown>>;
+    const msg = input[0] as Record<string, unknown>;
+    const content = msg.content as Array<Record<string, unknown>>;
+
+    expect(content[0]).toEqual({
+      type: "input_image",
+      image_url: "https://example.com/img.png",
+      detail: "high",
+    });
+  });
+
+  test("M17: omits detail when not specified", () => {
+    const request = makeRequest({
+      messages: [
+        {
+          role: Role.USER,
+          content: [
+            {
+              kind: "image",
+              image: { url: "https://example.com/img.png" },
+            },
+          ],
+        },
+      ],
+    });
+
+    const { body } = translateRequest(request, false);
+    const input = body.input as Array<Record<string, unknown>>;
+    const msg = input[0] as Record<string, unknown>;
+    const content = msg.content as Array<Record<string, unknown>>;
+
+    expect(content[0]).toEqual({
+      type: "input_image",
+      image_url: "https://example.com/img.png",
+    });
+  });
+
+  test("M18: recursively enforces strict schema on nested objects", () => {
+    const request = makeRequest({
+      messages: [
+        { role: Role.USER, content: [{ kind: "text", text: "Hi" }] },
+      ],
+      tools: [
+        {
+          name: "create_user",
+          description: "Create a user",
+          parameters: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              address: {
+                type: "object",
+                properties: {
+                  street: { type: "string" },
+                  city: { type: "string" },
+                },
+              },
+            },
+            required: ["name"],
+          },
+        },
+      ],
+    });
+
+    const { body } = translateRequest(request, false);
+    const tools = body.tools as Array<Record<string, unknown>>;
+    const firstTool = tools[0] as Record<string, unknown>;
+    const params = firstTool.parameters as Record<string, unknown>;
+
+    // Top level has additionalProperties: false
+    expect(params.additionalProperties).toBe(false);
+    // All keys in required
+    expect(params.required).toEqual(["name", "address"]);
+
+    // Nested object also has additionalProperties: false and required
+    const props = params.properties as Record<string, Record<string, unknown>>;
+    const address = props.address as Record<string, unknown>;
+    expect(address.additionalProperties).toBe(false);
+    expect(address.required).toEqual(["street", "city"]);
+    // address was optional, so it gets nullable type
+    expect(address.type).toEqual(["object", "null"]);
+  });
+
+  test("M19: encodes tool result image as data URI in output", () => {
+    const imageData = new Uint8Array([137, 80, 78, 71]);
+    const request = makeRequest({
+      messages: [
+        {
+          role: Role.TOOL,
+          content: [
+            {
+              kind: "tool_result",
+              toolResult: {
+                toolCallId: "call_img",
+                content: "Screenshot taken",
+                isError: false,
+                imageData,
+                imageMediaType: "image/png",
+              },
+            },
+          ],
+          toolCallId: "call_img",
+        },
+      ],
+    });
+
+    const { body } = translateRequest(request, false);
+    const input = body.input as Array<Record<string, unknown>>;
+    const firstItem = input[0] as Record<string, unknown>;
+    const output = firstItem.output as string;
+
+    expect(output).toContain("Screenshot taken");
+    expect(output).toContain("data:image/png;base64,");
+  });
+
+  test("M19: encodes tool result image without text content", () => {
+    const imageData = new Uint8Array([255, 216, 255]);
+    const request = makeRequest({
+      messages: [
+        {
+          role: Role.TOOL,
+          content: [
+            {
+              kind: "tool_result",
+              toolResult: {
+                toolCallId: "call_img2",
+                content: "",
+                isError: false,
+                imageData,
+                imageMediaType: "image/jpeg",
+              },
+            },
+          ],
+          toolCallId: "call_img2",
+        },
+      ],
+    });
+
+    const { body } = translateRequest(request, false);
+    const input = body.input as Array<Record<string, unknown>>;
+    const firstItem = input[0] as Record<string, unknown>;
+    const output = firstItem.output as string;
+
+    expect(output).toMatch(/^data:image\/jpeg;base64,/);
+  });
 });

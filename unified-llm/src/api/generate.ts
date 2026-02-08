@@ -5,12 +5,20 @@ import type { ResponseFormat } from "../types/response-format.js";
 import type { Request } from "../types/request.js";
 import type { Response, Usage } from "../types/response.js";
 import { addUsage, responseText, responseToolCalls, responseReasoning } from "../types/response.js";
-import type { TimeoutConfig } from "../types/timeout.js";
+import type { TimeoutConfig, AdapterTimeout } from "../types/timeout.js";
 import { ConfigurationError } from "../types/errors.js";
 import { retry } from "../utils/retry.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
 import type { StepResult, GenerateResult, StopCondition } from "./types.js";
+
+function toAdapterTimeout(timeout: number | TimeoutConfig): AdapterTimeout {
+  if (typeof timeout === "number") {
+    return { connect: timeout, request: timeout, streamRead: timeout };
+  }
+  const ms = timeout.perStep ?? timeout.total ?? 120_000;
+  return { connect: ms, request: ms, streamRead: ms };
+}
 
 export interface GenerateOptions {
   model: string;
@@ -108,6 +116,8 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
       stopSequences: options.stopSequences,
       reasoningEffort: options.reasoningEffort,
       providerOptions: options.providerOptions,
+      timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout) : undefined,
+      abortSignal: options.abortSignal,
     };
 
     const response = await retry(

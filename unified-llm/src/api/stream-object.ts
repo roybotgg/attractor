@@ -64,7 +64,7 @@ export async function* streamObjectWithJsonSchema(
 
   for await (const event of result) {
     if (event.type === StreamEventType.TEXT_DELTA) {
-      textBuffer += event.text;
+      textBuffer += event.delta;
       const parsed = partialJsonParse(textBuffer);
       if (parsed !== undefined && parsed !== lastParsed) {
         lastParsed = parsed;

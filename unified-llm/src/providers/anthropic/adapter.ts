@@ -18,6 +18,7 @@ import { parseSSE } from "../../utils/sse.js";
 import { str, rec } from "../../utils/extract.js";
 import { translateRequest } from "./request-translator.js";
 import { injectCacheControl } from "./cache.js";
+import { resolveFileImages } from "../../utils/resolve-file-images.js";
 import { translateResponse } from "./response-translator.js";
 import { translateStream } from "./stream-translator.js";
 
@@ -31,10 +32,23 @@ export interface AnthropicAdapterOptions {
 const ANTHROPIC_API_VERSION = "2023-06-01";
 const DEFAULT_BASE_URL = "https://api.anthropic.com";
 
+function parseRetryAfterHeader(headers: Headers): number | undefined {
+  const value = headers.get("retry-after");
+  if (value === null) {
+    return undefined;
+  }
+  const seconds = Number(value);
+  if (!Number.isNaN(seconds) && seconds > 0) {
+    return seconds;
+  }
+  return undefined;
+}
+
 function mapError(
   status: number,
   body: unknown,
   provider: string,
+  headers: Headers,
 ): ProviderError | undefined {
   const errorBody = rec(body);
   const errorObj = rec(errorBody?.["error"]);
@@ -54,8 +68,10 @@ function mapError(
       }
       return new InvalidRequestError(message, provider, body);
     }
-    case 429:
-      return new RateLimitError(message, provider, undefined, body);
+    case 429: {
+      const retryAfter = parseRetryAfterHeader(headers);
+      return new RateLimitError(message, provider, retryAfter, body);
+    }
     case 529:
       return new ServerError(message, provider, status, body);
     default:
@@ -81,19 +97,23 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 
   async complete(request: Request): Promise<Response> {
-    const { body, headers: extraHeaders } = translateRequest(request);
+    const resolved = await resolveFileImages(request);
+    const { body, headers: extraHeaders } = translateRequest(resolved);
 
     const useCache = shouldUseCache(request);
     const finalBody = useCache ? injectCacheControl(body) : body;
 
     const headers = this.buildHeaders(extraHeaders, useCache);
 
+    const timeout = request.timeout ?? this.timeout;
+
     const response = await httpRequest({
       url: `${this.baseUrl}/v1/messages`,
       method: "POST",
       headers,
       body: finalBody,
-      timeout: this.timeout,
+      timeout,
+      signal: request.abortSignal,
       mapError,
       provider: this.name,
     });
@@ -103,7 +123,8 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 
   async *stream(request: Request): AsyncGenerator<StreamEvent> {
-    const { body, headers: extraHeaders } = translateRequest(request);
+    const resolved = await resolveFileImages(request);
+    const { body, headers: extraHeaders } = translateRequest(resolved);
 
     const useCache = shouldUseCache(request);
     const finalBody = useCache
@@ -111,13 +132,15 @@ export class AnthropicAdapter implements ProviderAdapter {
       : { ...body, stream: true };
 
     const headers = this.buildHeaders(extraHeaders, useCache);
+    const timeout = request.timeout ?? this.timeout;
 
     const response = await httpRequestStream({
       url: `${this.baseUrl}/v1/messages`,
       method: "POST",
       headers,
       body: finalBody,
-      timeout: this.timeout,
+      timeout,
+      signal: request.abortSignal,
       mapError,
       provider: this.name,
     });
@@ -142,8 +165,14 @@ export class AnthropicAdapter implements ProviderAdapter {
       ...extraHeaders,
     };
 
-    if (useCache && !headers["anthropic-beta"]) {
-      headers["anthropic-beta"] = "prompt-caching-2024-07-31";
+    if (useCache) {
+      const cacheHeader = "prompt-caching-2024-07-31";
+      const existing = headers["anthropic-beta"];
+      if (existing) {
+        headers["anthropic-beta"] = `${existing},${cacheHeader}`;
+      } else {
+        headers["anthropic-beta"] = cacheHeader;
+      }
     }
 
     return headers;

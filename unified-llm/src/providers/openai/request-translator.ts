@@ -25,15 +25,18 @@ function translateContentPartToInput(part: ContentPart): Record<string, unknown>
     return { type: "input_text", text: part.text };
   }
   if (isImagePart(part)) {
+    const result: Record<string, unknown> = { type: "input_image" };
     if (part.image.data) {
-      return {
-        type: "input_image",
-        image_url: encodeImageToDataUri(part.image.data, part.image.mediaType),
-      };
+      result.image_url = encodeImageToDataUri(part.image.data, part.image.mediaType);
+    } else if (part.image.url) {
+      result.image_url = part.image.url;
+    } else {
+      return undefined;
     }
-    if (part.image.url) {
-      return { type: "input_image", image_url: part.image.url };
+    if (part.image.detail) {
+      result.detail = part.image.detail;
     }
+    return result;
   }
   return undefined;
 }
@@ -85,20 +88,83 @@ function translateMessage(message: Message): Array<Record<string, unknown>> {
   } else if (message.role === Role.TOOL) {
     for (const part of message.content) {
       if (isToolResultPart(part)) {
-        const output =
+        let output =
           typeof part.toolResult.content === "string"
             ? part.toolResult.content
             : JSON.stringify(part.toolResult.content);
-        items.push({
+
+        // OpenAI function_call_output only supports string output, so
+        // tool result images are encoded as data URIs appended to the text.
+        if (part.toolResult.imageData) {
+          const dataUri = encodeImageToDataUri(
+            part.toolResult.imageData,
+            part.toolResult.imageMediaType,
+          );
+          output = output ? `${output}\n${dataUri}` : dataUri;
+        }
+
+        const item: Record<string, unknown> = {
           type: "function_call_output",
           call_id: part.toolResult.toolCallId,
           output,
-        });
+        };
+
+        if (part.toolResult.isError) {
+          item.status = "error";
+        }
+
+        items.push(item);
       }
     }
   }
 
   return items;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function enforceStrictSchema(
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...schema };
+  result.additionalProperties = false;
+
+  const props = result.properties;
+  if (isRecord(props)) {
+    const allKeys = Object.keys(props);
+    const existing = Array.isArray(result.required)
+      ? result.required.filter((v): v is string => typeof v === "string")
+      : [];
+    const existingSet = new Set(existing);
+    const missing = allKeys.filter((k) => !existingSet.has(k));
+
+    const newProps: Record<string, unknown> = {};
+    for (const key of allKeys) {
+      const prop = props[key];
+      if (isRecord(prop)) {
+        // Recursively enforce strict schema on nested object properties
+        const enforced = isRecord(prop.properties)
+          ? enforceStrictSchema({ ...prop })
+          : { ...prop };
+
+        if (missing.includes(key)) {
+          const propType = enforced.type;
+          enforced.type = Array.isArray(propType)
+            ? propType
+            : [String(propType), "null"];
+        }
+        newProps[key] = enforced;
+      } else {
+        newProps[key] = prop;
+      }
+    }
+    result.properties = newProps;
+    result.required = allKeys;
+  }
+
+  return result;
 }
 
 function translateToolChoice(
@@ -156,50 +222,15 @@ export function translateRequest(
   }
 
   // Tools — OpenAI strict mode requires additionalProperties: false
-  // and all properties listed in required
+  // and all properties listed in required (recursively for nested objects)
   if (request.tools && request.tools.length > 0) {
-    body.tools = request.tools.map((tool) => {
-      const params = { ...tool.parameters };
-      params.additionalProperties = false;
-
-      // Strict mode: all properties must be in required.
-      // Optional params get { type: [original, "null"] } to allow null.
-      const props = params.properties;
-      if (typeof props === "object" && props !== null) {
-        const allKeys = Object.keys(props as Record<string, unknown>);
-        const existing = Array.isArray(params.required)
-          ? (params.required as string[])
-          : [];
-        const existingSet = new Set(existing);
-        const missing = allKeys.filter((k) => !existingSet.has(k));
-
-        if (missing.length > 0) {
-          const newProps = { ...(props as Record<string, Record<string, unknown>>) };
-          for (const key of missing) {
-            const prop = newProps[key];
-            if (prop) {
-              const propType = prop.type;
-              newProps[key] = {
-                ...prop,
-                type: Array.isArray(propType)
-                  ? propType
-                  : [propType as string, "null"],
-              };
-            }
-          }
-          params.properties = newProps;
-          params.required = allKeys;
-        }
-      }
-
-      return {
-        type: "function",
-        name: tool.name,
-        description: tool.description,
-        parameters: params,
-        strict: true,
-      };
-    });
+    body.tools = request.tools.map((tool) => ({
+      type: "function",
+      name: tool.name,
+      description: tool.description,
+      parameters: enforceStrictSchema({ ...tool.parameters }),
+      strict: true,
+    }));
   }
 
   // Tool choice

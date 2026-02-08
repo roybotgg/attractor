@@ -1,6 +1,7 @@
 import type { Message } from "./message.js";
 import type { ToolDefinition, ToolChoice } from "./tool.js";
 import type { ResponseFormat } from "./response-format.js";
+import type { AdapterTimeout } from "./timeout.js";
 
 export interface Request {
   model: string;
@@ -16,4 +17,6 @@ export interface Request {
   reasoningEffort?: string;
   metadata?: Record<string, string>;
   providerOptions?: Record<string, Record<string, unknown>>;
+  timeout?: AdapterTimeout;
+  abortSignal?: AbortSignal;
 }

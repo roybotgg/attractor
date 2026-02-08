@@ -1,4 +1,4 @@
-import type { Usage } from "./response.js";
+import type { FinishReason, Usage, Response } from "./response.js";
 
 export const StreamEventType = {
   STREAM_START: "stream_start",
@@ -11,6 +11,7 @@ export const StreamEventType = {
   TOOL_CALL_START: "tool_call_start",
   TOOL_CALL_DELTA: "tool_call_delta",
   TOOL_CALL_END: "tool_call_end",
+  STEP_FINISH: "step_finish",
   FINISH: "finish",
   ERROR: "error",
   PROVIDER_EVENT: "provider_event",
@@ -21,20 +22,24 @@ export type StreamEventType =
 
 export interface StreamStartEvent {
   type: typeof StreamEventType.STREAM_START;
+  id?: string;
   model?: string;
 }
 
 export interface TextStartEvent {
   type: typeof StreamEventType.TEXT_START;
+  textId?: string;
 }
 
 export interface TextDeltaEvent {
   type: typeof StreamEventType.TEXT_DELTA;
-  text: string;
+  delta: string;
+  textId?: string;
 }
 
 export interface TextEndEvent {
   type: typeof StreamEventType.TEXT_END;
+  textId?: string;
 }
 
 export interface ReasoningStartEvent {
@@ -43,7 +48,7 @@ export interface ReasoningStartEvent {
 
 export interface ReasoningDeltaEvent {
   type: typeof StreamEventType.REASONING_DELTA;
-  text: string;
+  reasoningDelta: string;
 }
 
 export interface ReasoningEndEvent {
@@ -68,10 +73,17 @@ export interface ToolCallEndEvent {
   toolCallId: string;
 }
 
+export interface StepFinishEvent {
+  type: typeof StreamEventType.STEP_FINISH;
+  finishReason: FinishReason;
+  usage?: Usage;
+}
+
 export interface FinishEvent {
   type: typeof StreamEventType.FINISH;
-  finishReason: string;
+  finishReason: FinishReason;
   usage?: Usage;
+  response?: Response;
 }
 
 export interface ErrorEvent {
@@ -96,6 +108,7 @@ export type StreamEvent =
   | ToolCallStartEvent
   | ToolCallDeltaEvent
   | ToolCallEndEvent
+  | StepFinishEvent
   | FinishEvent
   | ErrorEvent
   | ProviderEvent;

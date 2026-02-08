@@ -7,3 +7,5 @@ export { AnthropicAdapter } from "./providers/anthropic/index.js";
 export type { AnthropicAdapterOptions } from "./providers/anthropic/index.js";
 export { OpenAIAdapter } from "./providers/openai/index.js";
 export type { OpenAIAdapterOptions } from "./providers/openai/index.js";
+export { OpenAICompatibleAdapter } from "./providers/openai-compatible/index.js";
+export type { OpenAICompatibleAdapterOptions } from "./providers/openai-compatible/index.js";

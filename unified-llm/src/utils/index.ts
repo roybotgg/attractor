@@ -8,3 +8,6 @@ export { StreamAccumulator } from "./stream-accumulator.js";
 export { safeJsonParse, partialJsonParse } from "./json.js";
 export type { SafeJsonResult } from "./json.js";
 export { str, num, optNum, optStr, rec, recArray, recOrEmpty } from "./extract.js";
+export { readImageFile, isLocalFilePath } from "./file-image.js";
+export type { FileImageResult } from "./file-image.js";
+export { resolveFileImages } from "./resolve-file-images.js";

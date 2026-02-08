@@ -60,6 +60,7 @@ export type {
   ToolCallStartEvent,
   ToolCallDeltaEvent,
   ToolCallEndEvent,
+  StepFinishEvent,
   FinishEvent,
   ErrorEvent,
   ProviderEvent,
