@@ -12,6 +12,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { mkdtemp, rm } from "fs/promises";
+import { writeFileSync } from "node:fs";
 import {
   parse,
   PipelineRunner,
@@ -35,13 +36,22 @@ import {
   createAnswer,
   createOutcome,
   loadCheckpoint,
+  saveCheckpoint,
   VariableExpansionTransform,
   StylesheetTransform,
+  GraphMergeTransform,
+  ConditionalHandler,
+  ManagerLoopHandler,
+  SubPipelineHandler,
   createServer,
+  parse,
+  stringAttr,
+  integerAttr,
 } from "../attractor/src/index.js";
 import type {
   CodergenBackend,
   Node,
+  Edge,
   Outcome,
   PipelineRunnerConfig,
   PipelineEvent,
@@ -49,8 +59,11 @@ import type {
   NodeExecutor,
   Context,
   Graph,
+  AttributeValue,
+  Checkpoint,
   AttractorServer,
 } from "../attractor/src/index.js";
+import type { PipelineRunnerFactory } from "../attractor/src/handlers/manager-loop.js";
 import { Client, AnthropicAdapter } from "../unified-llm/src/index.js";
 import { createAnthropicProfile } from "../coding-agent/src/profiles/anthropic-profile.js";
 import { LocalExecutionEnvironment } from "../coding-agent/src/env/local-env.js";
@@ -788,5 +801,623 @@ describe("scenario 5: multi-stage refactoring (real LLM)", () => {
       await rm(tempDir, { recursive: true, force: true });
     },
     120_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Helpers for Scenarios 6-11
+// ---------------------------------------------------------------------------
+
+function writeTempDot(dir: string, filename: string, content: string): string {
+  const p = join(dir, filename);
+  writeFileSync(p, content, "utf-8");
+  return p;
+}
+
+function makeNode(
+  id: string,
+  attrs: Record<string, AttributeValue> = {},
+): Node {
+  return { id, attributes: new Map(Object.entries(attrs)) };
+}
+
+function makeEdge(
+  from: string,
+  to: string,
+  attrs: Record<string, AttributeValue> = {},
+): Edge {
+  return { from, to, attributes: new Map(Object.entries(attrs)) };
+}
+
+function makeGraph(
+  nodes: Node[],
+  edges: Edge[],
+  graphAttrs: Record<string, AttributeValue> = {},
+): Graph {
+  const nodeMap = new Map<string, Node>();
+  for (const n of nodes) nodeMap.set(n.id, n);
+  return {
+    name: "test",
+    attributes: new Map(Object.entries(graphAttrs)),
+    nodes: nodeMap,
+    edges,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 6: "Bug Triage Router"
+// Pipeline: start → analyze → triage(diamond) → [critical|normal|wontfix] → exit
+//
+// Features exercised:
+//   diamond shape as ConditionalHandler, edge weight tiebreaking,
+//   condition=outcome=success matching multiple edges
+// ---------------------------------------------------------------------------
+describe("scenario 6: bug triage router", () => {
+  test(
+    "diamond node routes via conditions and weight tiebreaks",
+    async () => {
+      const dot = `
+      digraph BugTriage {
+        graph [goal="Triage incoming bug"]
+        node [shape=box]
+        start    [shape=Mdiamond]
+        exit     [shape=Msquare]
+        analyze  [prompt="Classify this bug"]
+        triage   [shape=diamond]
+        critical [prompt="Apply hotfix"]
+        normal   [prompt="Schedule fix"]
+        wontfix  [prompt="Document as wontfix"]
+
+        start -> analyze -> triage
+        triage -> critical [label="Critical", condition="outcome=success", weight=10]
+        triage -> normal   [label="Normal",   condition="outcome=success", weight=5]
+        triage -> wontfix  [label="WontFix",  condition="outcome!=success"]
+        critical -> exit
+        normal   -> exit
+        wontfix  -> exit
+      }
+    `;
+      const graph = parse(dot);
+
+      const backend = makeBackend();
+
+      const registry = createHandlerRegistry();
+      registry.register("start", new StartHandler());
+      registry.register("exit", new ExitHandler());
+      registry.register("codergen", new CodergenHandler(backend));
+      registry.register("conditional", new ConditionalHandler());
+
+      const runner = buildRunner({ handlerRegistry: registry });
+      const result = await runner.run(graph);
+
+      // Pipeline succeeds
+      expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+
+      // Triage was visited
+      expect(result.completedNodes).toContain("triage");
+
+      // ConditionalHandler returns SUCCESS, so outcome=success.
+      // Both "critical" (weight=10) and "normal" (weight=5) edges match,
+      // but critical wins via higher weight.
+      expect(result.completedNodes).toContain("critical");
+      expect(result.completedNodes).not.toContain("normal");
+      expect(result.completedNodes).not.toContain("wontfix");
+
+      // Context tracks the critical path
+      expect(result.context.get("last_stage")).toBe("critical");
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 7: "Crash Recovery"
+// Pipeline: start → build → test → integrate → deploy → exit
+// Simulate a crash after "test" by saving a synthetic checkpoint, then resume.
+//
+// Features exercised:
+//   runner.resume(), context restoration, node skipping,
+//   checkpoint round-trip
+// ---------------------------------------------------------------------------
+describe("scenario 7: crash recovery", () => {
+  test(
+    "resumes from checkpoint, skips completed nodes, preserves context",
+    async () => {
+      const dot = `
+      digraph Deploy {
+        graph [goal="Deploy the release"]
+        node [shape=box]
+        start     [shape=Mdiamond]
+        exit      [shape=Msquare]
+        build     [prompt="Build artifacts"]
+        test      [prompt="Run test suite"]
+        integrate [prompt="Integration check"]
+        deploy    [prompt="Deploy to prod"]
+
+        start -> build -> test -> integrate -> deploy -> exit
+      }
+    `;
+      const graph = parse(dot);
+
+      // Track which nodes the recording handler actually executes
+      const executedNodes: string[] = [];
+      const recordingCodergen = {
+        async run(): Promise<string> {
+          return "stub";
+        },
+      };
+      const recordingHandler = {
+        async execute(
+          node: Node,
+          _ctx: Context,
+          _graph: Graph,
+          _logsRoot: string,
+        ): Promise<Outcome> {
+          executedNodes.push(node.id);
+          return createOutcome({ status: StageStatus.SUCCESS });
+        },
+      };
+
+      const logsRoot = tempLogsRoot();
+      const checkpointDir = await mkdtemp(join(tmpdir(), "attractor-s7-"));
+      const checkpointPath = join(checkpointDir, "checkpoint.json");
+
+      // Synthetic checkpoint: start, build, test are done
+      const checkpoint: Checkpoint = {
+        pipelineId: "crash-recovery-test",
+        timestamp: new Date().toISOString(),
+        currentNode: "test",
+        completedNodes: ["start", "build", "test"],
+        nodeRetries: { start: 1, build: 1, test: 1 },
+        nodeOutcomes: { start: "success", build: "success", test: "success" },
+        contextValues: {
+          outcome: "success",
+          build_hash: "abc123",
+          "graph.goal": "Deploy the release",
+        },
+        logs: [],
+      };
+      await saveCheckpoint(checkpoint, checkpointPath);
+
+      const registry = createHandlerRegistry();
+      registry.register("start", recordingHandler);
+      registry.register("exit", recordingHandler);
+      registry.register("codergen", recordingHandler);
+
+      const runner = new PipelineRunner({
+        handlerRegistry: registry,
+        logsRoot,
+      });
+
+      const result = await runner.resume(graph, checkpointPath);
+
+      // Pipeline succeeds
+      expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+
+      // Only integrate and deploy were actually executed (start/build/test skipped)
+      expect(executedNodes).toContain("integrate");
+      expect(executedNodes).toContain("deploy");
+      expect(executedNodes).not.toContain("start");
+      expect(executedNodes).not.toContain("build");
+      expect(executedNodes).not.toContain("test");
+
+      // completedNodes contains all 5 non-terminal nodes + exit
+      expect(result.completedNodes).toContain("start");
+      expect(result.completedNodes).toContain("build");
+      expect(result.completedNodes).toContain("test");
+      expect(result.completedNodes).toContain("integrate");
+      expect(result.completedNodes).toContain("deploy");
+
+      // Context preserved from checkpoint
+      expect(result.context.get("build_hash")).toBe("abc123");
+      expect(result.context.get("graph.goal")).toBe("Deploy the release");
+
+      await rm(checkpointDir, { recursive: true, force: true });
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 8: "Live Event Dashboard"
+// Pipeline: start → work → exit (submitted via HTTP)
+//
+// Features exercised:
+//   SSE endpoint (GET /events), checkpoint endpoint (GET /checkpoint),
+//   graph endpoint (GET /graph)
+// ---------------------------------------------------------------------------
+describe("scenario 8: live event dashboard", () => {
+  let server: AttractorServer | undefined;
+
+  afterEach(() => {
+    if (server) {
+      server.stop();
+      server = undefined;
+    }
+  });
+
+  test(
+    "SSE stream, checkpoint, and graph endpoints work end-to-end",
+    async () => {
+      const backend = makeBackend({ defaultStubResponse: "Dashboard work" });
+      const registry = createHandlerRegistry();
+      registry.register("start", new StartHandler());
+      registry.register("exit", new ExitHandler());
+      registry.register("codergen", new CodergenHandler(backend));
+
+      server = createServer({
+        runnerConfig: { handlerRegistry: registry, logsRoot: tempLogsRoot() },
+      });
+
+      const baseUrl = `http://127.0.0.1:${server.port}`;
+
+      const dot = `
+      digraph Dashboard {
+        graph [goal="Dashboard test"]
+        node [shape=box]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        work  [prompt="Do some work"]
+
+        start -> work -> exit
+      }
+    `;
+
+      // POST /pipelines
+      const createResp = await fetch(`${baseUrl}/pipelines`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dot }),
+      });
+      expect(createResp.status).toBe(201);
+      const createBody = (await createResp.json()) as {
+        id: string;
+        status: string;
+      };
+      const pipelineId = createBody.id;
+
+      // GET /pipelines/:id/events — consume SSE stream
+      const eventsResp = await fetch(
+        `${baseUrl}/pipelines/${pipelineId}/events`,
+      );
+      expect(eventsResp.headers.get("content-type")).toBe(
+        "text/event-stream",
+      );
+
+      const collectedSSEEvents: Array<{ kind: string }> = [];
+      const reader = eventsResp.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (reader) {
+        let buffer = "";
+        let done = false;
+        while (!done) {
+          const chunk = await reader.read();
+          done = chunk.done;
+          if (chunk.value) {
+            buffer += decoder.decode(chunk.value, { stream: true });
+            // Parse SSE events from buffer
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const payload = line.slice(6);
+                try {
+                  const parsed = JSON.parse(payload) as { kind: string };
+                  collectedSSEEvents.push(parsed);
+                } catch {
+                  // skip malformed
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const sseKinds = collectedSSEEvents.map((e) => e.kind);
+      // PIPELINE_STARTED may fire before SSE subscription connects, so
+      // only assert on events that are guaranteed to appear after subscribe.
+      expect(sseKinds).toContain(PipelineEventKind.PIPELINE_COMPLETED);
+      expect(sseKinds).toContain(PipelineEventKind.STAGE_STARTED);
+      expect(sseKinds).toContain(PipelineEventKind.STAGE_COMPLETED);
+      expect(sseKinds).toContain(PipelineEventKind.CHECKPOINT_SAVED);
+
+      // Poll for completion (pipeline may already be done from SSE drain)
+      const maxPolls = 50;
+      let status = "running";
+      let polls = 0;
+      while (status === "running" && polls < maxPolls) {
+        const statusResp = await fetch(`${baseUrl}/pipelines/${pipelineId}`);
+        const statusBody = (await statusResp.json()) as { status: string };
+        status = statusBody.status;
+        if (status === "running") {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        polls++;
+      }
+      expect(status).toBe("completed");
+
+      // GET /pipelines/:id/checkpoint
+      const cpResp = await fetch(
+        `${baseUrl}/pipelines/${pipelineId}/checkpoint`,
+      );
+      expect(cpResp.status).toBe(200);
+      const cpBody = (await cpResp.json()) as {
+        checkpoint: { completedNodes: string[]; status: string };
+      };
+      expect(cpBody.checkpoint.completedNodes).toContain("work");
+      expect(cpBody.checkpoint.status).toBe("success");
+
+      // GET /pipelines/:id/graph
+      const graphResp = await fetch(
+        `${baseUrl}/pipelines/${pipelineId}/graph`,
+      );
+      expect(graphResp.status).toBe(200);
+      const graphBody = await graphResp.text();
+      // Should contain the DOT source (either as SVG or raw DOT)
+      expect(graphBody).toContain("Dashboard");
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 9: "Delegated Validation"
+// Parent pipeline: start → generate → validate(sub_pipeline) → exit
+// Child pipeline: start → lint → test → exit
+//
+// Features exercised:
+//   SubPipelineHandler, child DOT file execution,
+//   sub_pipeline.* context propagation
+// ---------------------------------------------------------------------------
+describe("scenario 9: delegated validation", () => {
+  test(
+    "sub-pipeline executes child DOT and propagates context",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "attractor-s9-"));
+
+      const childDot = `
+      digraph child {
+        graph [goal="Validate code"]
+        node [shape=box]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        lint  [prompt="Run linter"]
+        test  [prompt="Run tests"]
+
+        start -> lint -> test -> exit
+      }
+    `;
+      const childPath = writeTempDot(tempDir, "child.dot", childDot);
+
+      const parentDot = `
+      digraph Parent {
+        graph [goal="Generate and validate"]
+        node [shape=box]
+        start    [shape=Mdiamond]
+        exit     [shape=Msquare]
+        generate [prompt="Generate code"]
+        validate [type="sub_pipeline", sub_pipeline="${childPath}"]
+
+        start -> generate -> validate -> exit
+      }
+    `;
+      const graph = parse(parentDot);
+
+      const backend = makeBackend({ defaultStubResponse: "stub" });
+
+      const registry = createHandlerRegistry();
+      registry.register("start", new StartHandler());
+      registry.register("exit", new ExitHandler());
+      registry.register("codergen", new CodergenHandler(backend));
+      registry.register(
+        "sub_pipeline",
+        new SubPipelineHandler({ handlerRegistry: registry }),
+      );
+
+      const runner = buildRunner({ handlerRegistry: registry });
+      const result = await runner.run(graph);
+
+      // Pipeline succeeds
+      expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+
+      // Parent nodes completed
+      expect(result.completedNodes).toContain("generate");
+      expect(result.completedNodes).toContain("validate");
+
+      // Sub-pipeline context propagated
+      expect(result.context.get("sub_pipeline.validate.status")).toBe("success");
+      const childCompleted = String(
+        result.context.get("sub_pipeline.validate.completedNodes"),
+      );
+      expect(childCompleted).toContain("lint");
+      expect(childCompleted).toContain("test");
+
+      await rm(tempDir, { recursive: true, force: true });
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 10: "Supervised Worker"
+// Parent pipeline: start → supervisor(house) → exit
+// Child pipeline: start → compile → link → exit
+//
+// Features exercised:
+//   ManagerLoopHandler, house shape, in-process runner factory,
+//   stack.child.* context propagation
+// ---------------------------------------------------------------------------
+describe("scenario 10: supervised worker", () => {
+  test(
+    "manager loop supervises child pipeline via in-process runner factory",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "attractor-s10-"));
+
+      const childDot = `
+      digraph child {
+        node [shape=box]
+        start   [shape=Mdiamond]
+        exit    [shape=Msquare]
+        compile [prompt="Compile"]
+        link    [prompt="Link"]
+
+        start -> compile -> link -> exit
+      }
+    `;
+      const childPath = writeTempDot(tempDir, "child.dot", childDot);
+
+      // Build parent graph programmatically because the DOT parser doesn't
+      // support quoted attribute keys like "stack.child_dotfile".
+      const graph = makeGraph(
+        [
+          makeNode("start", { shape: stringAttr("Mdiamond") }),
+          makeNode("exit", { shape: stringAttr("Msquare") }),
+          makeNode("supervisor", {
+            shape: stringAttr("house"),
+            "manager.poll_interval": stringAttr("100ms"),
+            "manager.max_cycles": integerAttr(50),
+            "manager.actions": stringAttr("observe,wait"),
+          }),
+        ],
+        [
+          makeEdge("start", "supervisor"),
+          makeEdge("supervisor", "exit"),
+        ],
+        {
+          goal: stringAttr("Supervise build"),
+          "stack.child_dotfile": stringAttr(childPath),
+        },
+      );
+
+      const backend = makeBackend({ defaultStubResponse: "stub" });
+
+      // Build a child registry for the runner factory
+      const childRegistry = createHandlerRegistry();
+      childRegistry.register("start", new StartHandler());
+      childRegistry.register("exit", new ExitHandler());
+      childRegistry.register("codergen", new CodergenHandler(backend));
+
+      const runnerFactory: PipelineRunnerFactory = (
+        _graph: Graph,
+        logsRoot: string,
+      ) =>
+        new PipelineRunner({
+          handlerRegistry: childRegistry,
+          logsRoot,
+        });
+
+      const parentRegistry = createHandlerRegistry();
+      parentRegistry.register("start", new StartHandler());
+      parentRegistry.register("exit", new ExitHandler());
+      parentRegistry.register(
+        "stack.manager_loop",
+        new ManagerLoopHandler({ runnerFactory }),
+      );
+
+      const runner = buildRunner({ handlerRegistry: parentRegistry });
+      const result = await runner.run(graph);
+
+      // Pipeline succeeds
+      expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+
+      // Child status propagated
+      expect(result.context.get("stack.child.status")).toBe("completed");
+      const childCompleted = String(
+        result.context.get("stack.child.completedNodes"),
+      );
+      expect(childCompleted).toContain("compile");
+      expect(childCompleted).toContain("link");
+
+      // Child context ingested
+      expect(result.context.get("stack.child.context.outcome")).toBe("success");
+
+      await rm(tempDir, { recursive: true, force: true });
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 11: "Composed Pipeline from Modules"
+// Two reusable graph modules (val, dep) merged into one pipeline via
+// GraphMergeTransform.
+//
+// Features exercised:
+//   GraphMergeTransform, node ID prefixing, cross-module edge wiring,
+//   programmatic graph construction
+// ---------------------------------------------------------------------------
+describe("scenario 11: composed pipeline from modules", () => {
+  test(
+    "GraphMergeTransform merges module graphs with prefixed IDs",
+    async () => {
+      // Module 1: validate (lint → test) — no start/exit nodes,
+      // just body nodes. The merge transform prefixes with the graph name.
+      const valGraph: Graph = {
+        name: "val",
+        attributes: new Map(),
+        nodes: new Map([
+          ["lint", makeNode("lint", { shape: stringAttr("box"), prompt: stringAttr("Run linter") })],
+          ["test", makeNode("test", { shape: stringAttr("box"), prompt: stringAttr("Run tests") })],
+        ]),
+        edges: [makeEdge("lint", "test")],
+      };
+
+      // Module 2: deploy (stage → release)
+      const depGraph: Graph = {
+        name: "dep",
+        attributes: new Map(),
+        nodes: new Map([
+          ["stage", makeNode("stage", { shape: stringAttr("box"), prompt: stringAttr("Stage") })],
+          ["release", makeNode("release", { shape: stringAttr("box"), prompt: stringAttr("Release") })],
+        ]),
+        edges: [makeEdge("stage", "release")],
+      };
+
+      // Main graph wires the two modules together.
+      // After merge, module nodes become val.lint, val.test, dep.stage, dep.release.
+      const mainGraph = makeGraph(
+        [
+          makeNode("start", { shape: stringAttr("Mdiamond") }),
+          makeNode("exit", { shape: stringAttr("Msquare") }),
+        ],
+        [
+          makeEdge("start", "val.lint"),
+          makeEdge("val.test", "dep.stage"),
+          makeEdge("dep.release", "exit"),
+        ],
+        { goal: stringAttr("Composed pipeline") },
+      );
+
+      const backend = makeBackend({ defaultStubResponse: "stub" });
+
+      const registry = createHandlerRegistry();
+      registry.register("start", new StartHandler());
+      registry.register("exit", new ExitHandler());
+      registry.register("codergen", new CodergenHandler(backend));
+
+      const runner = new PipelineRunner({
+        handlerRegistry: registry,
+        transforms: [new GraphMergeTransform([valGraph, depGraph])],
+        logsRoot: tempLogsRoot(),
+      });
+
+      const result = await runner.run(mainGraph);
+
+      // Pipeline succeeds
+      expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+
+      // Prefixed module nodes were traversed
+      expect(result.completedNodes).toContain("val.lint");
+      expect(result.completedNodes).toContain("val.test");
+      expect(result.completedNodes).toContain("dep.stage");
+      expect(result.completedNodes).toContain("dep.release");
+
+      // Correct ordering: val module before dep module
+      const valTestIdx = result.completedNodes.indexOf("val.test");
+      const depStageIdx = result.completedNodes.indexOf("dep.stage");
+      expect(valTestIdx).toBeLessThan(depStageIdx);
+    },
+    TEST_TIMEOUT,
   );
 });
