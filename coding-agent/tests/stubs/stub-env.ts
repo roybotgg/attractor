@@ -81,6 +81,7 @@ export class StubExecutionEnvironment implements ExecutionEnvironment {
     _timeoutMs: number,
     _workingDir?: string,
     _envVars?: Record<string, string>,
+    _abortSignal?: AbortSignal,
   ): Promise<ExecResult> {
     return this.commandResults.get(command) ?? this.defaultExecResult;
   }

@@ -61,6 +61,7 @@ export function createGeminiProfile(
     id: "gemini",
     model,
     toolRegistry: registry,
+    knowledgeCutoff: "March 2025",
 
     buildSystemPrompt(
       environment: ExecutionEnvironment,

@@ -158,6 +158,35 @@ wait`;
     expect(size2).toBe(size1);
   });
 
+  test("execCommand aborts a running command when abortSignal fires", async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 100);
+
+    const start = Date.now();
+    const result = await env.execCommand("sleep 10", 30_000, undefined, undefined, controller.signal);
+    const elapsed = Date.now() - start;
+
+    // Should finish well under the 30s timeout
+    expect(elapsed).toBeLessThan(5000);
+    // The process was killed, so exit code is non-zero
+    expect(result.exitCode).not.toBe(0);
+    // It was not a timeout — abort is different from timeout
+    expect(result.timedOut).toBe(false);
+  });
+
+  test("execCommand handles already-aborted signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const start = Date.now();
+    const result = await env.execCommand("sleep 10", 30_000, undefined, undefined, controller.signal);
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(5000);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.timedOut).toBe(false);
+  });
+
   test("glob finds matching files", async () => {
     const globDir = join(tempDir, "glob-test");
     const { mkdir } = await import("node:fs/promises");

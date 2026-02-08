@@ -99,6 +99,7 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
     timeoutMs: number,
     workingDir?: string,
     envVars?: Record<string, string>,
+    abortSignal?: AbortSignal,
   ): Promise<ExecResult> {
     const cwd = workingDir ? this.resolvePath(workingDir) : this.workingDir;
     const filteredEnv = filterEnvironmentVariables(process.env, this.envVarPolicy);
@@ -143,6 +144,7 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
 
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+    let abortForceKillTimer: ReturnType<typeof setTimeout> | undefined;
 
     const exitPromise = new Promise<number | null>((resolveExit) => {
       proc.on("close", (code) => resolveExit(code));
@@ -161,14 +163,31 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
       }, timeoutMs);
     });
 
-    // Wait for exit or timeout
+    // Listen for abort signal to kill the process early
+    const abortPromise = new Promise<void>((resolvePromise) => {
+      if (!abortSignal) return; // never resolves — timeout or exit will win
+      if (abortSignal.aborted) {
+        killProcessGroup("SIGTERM");
+        abortForceKillTimer = setTimeout(() => killProcessGroup("SIGKILL"), 2000);
+        resolvePromise();
+        return;
+      }
+      abortSignal.addEventListener("abort", () => {
+        killProcessGroup("SIGTERM");
+        abortForceKillTimer = setTimeout(() => killProcessGroup("SIGKILL"), 2000);
+        resolvePromise();
+      }, { once: true });
+    });
+
+    // Wait for exit, timeout, or abort
     const exitCode = await Promise.race([
       exitPromise,
       timeoutPromise.then(() => null),
+      abortPromise.then(() => null),
     ]);
 
-    // If timed out, wait for process to actually exit (bounded by SIGKILL 2s + buffer)
-    if (timedOut) {
+    // If timed out or aborted, wait for process to actually exit (bounded by SIGKILL 2s + buffer)
+    if (timedOut || abortSignal?.aborted) {
       await Promise.race([
         exitPromise,
         new Promise<void>((r) => setTimeout(r, 3000)),
@@ -177,6 +196,7 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
 
     if (killTimer !== undefined) clearTimeout(killTimer);
     if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+    if (abortForceKillTimer !== undefined) clearTimeout(abortForceKillTimer);
 
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
     const stderr = Buffer.concat(stderrChunks).toString("utf-8");

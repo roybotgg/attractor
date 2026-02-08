@@ -234,7 +234,7 @@ export function createShellTool(config: {
         return "[ERROR: Command aborted before execution.]";
       }
 
-      const result = await env.execCommand(command, timeout);
+      const result = await env.execCommand(command, timeout, undefined, undefined, signal);
 
       const parts: string[] = [];
       if (result.stdout) {

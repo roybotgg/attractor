@@ -117,4 +117,89 @@ describe("validateToolArgs", () => {
     );
     expect(result).toBeNull();
   });
+
+  test("accepts value in enum list", () => {
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        output_mode: { type: "string", enum: ["content", "files_with_matches", "count"] },
+      },
+      required: ["output_mode"],
+    };
+    expect(validateToolArgs({ output_mode: "content" }, schema)).toBeNull();
+    expect(validateToolArgs({ output_mode: "files_with_matches" }, schema)).toBeNull();
+    expect(validateToolArgs({ output_mode: "count" }, schema)).toBeNull();
+  });
+
+  test("rejects value not in enum list", () => {
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        output_mode: { type: "string", enum: ["content", "files_with_matches", "count"] },
+      },
+      required: ["output_mode"],
+    };
+    expect(validateToolArgs({ output_mode: "invalid" }, schema)).toBe(
+      '"output_mode" must be one of [content, files_with_matches, count], got "invalid"',
+    );
+  });
+
+  test("accepts valid string array", () => {
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        paths: { type: "array", items: { type: "string" } },
+      },
+      required: ["paths"],
+    };
+    expect(validateToolArgs({ paths: ["/a.ts", "/b.ts"] }, schema)).toBeNull();
+  });
+
+  test("accepts empty array", () => {
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        paths: { type: "array", items: { type: "string" } },
+      },
+      required: ["paths"],
+    };
+    expect(validateToolArgs({ paths: [] }, schema)).toBeNull();
+  });
+
+  test("rejects non-array when array expected", () => {
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        paths: { type: "array", items: { type: "string" } },
+      },
+      required: ["paths"],
+    };
+    expect(validateToolArgs({ paths: "not-an-array" }, schema)).toBe(
+      'expected "paths" to be array, got string',
+    );
+  });
+
+  test("rejects array with wrong element types", () => {
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        paths: { type: "array", items: { type: "string" } },
+      },
+      required: ["paths"],
+    };
+    expect(validateToolArgs({ paths: ["/a.ts", 42] }, schema)).toBe(
+      'expected "paths[1]" to be string, got number',
+    );
+  });
+
+  test("accepts array without items schema (no element validation)", () => {
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        tags: { type: "array" },
+      },
+      required: ["tags"],
+    };
+    expect(validateToolArgs({ tags: [1, "two", true] }, schema)).toBeNull();
+  });
 });

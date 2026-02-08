@@ -88,7 +88,9 @@ describe("Anthropic real API", () => {
       );
       await eventCollector;
 
-      expect(session.state).toBe(SessionState.IDLE);
+      expect(
+        session.state === SessionState.IDLE || session.state === SessionState.AWAITING_INPUT,
+      ).toBe(true);
 
       // Verify file was created
       const fileExists = await env.fileExists(join(tempDir, "hello.txt"));
@@ -161,7 +163,9 @@ describe("Anthropic real API", () => {
       );
       await eventCollector;
 
-      expect(session.state).toBe(SessionState.IDLE);
+      expect(
+        session.state === SessionState.IDLE || session.state === SessionState.AWAITING_INPUT,
+      ).toBe(true);
 
       const content = await Bun.file(join(tempDir, "greet.py")).text();
       expect(content).toContain("goodbye");
@@ -209,7 +213,9 @@ describe("Anthropic real API", () => {
       );
       await eventCollector;
 
-      expect(session.state).toBe(SessionState.IDLE);
+      expect(
+        session.state === SessionState.IDLE || session.state === SessionState.AWAITING_INPUT,
+      ).toBe(true);
 
       const toolEnds = events.filter(
         (e) => e.kind === EventKind.TOOL_CALL_END,
@@ -271,7 +277,9 @@ describe("OpenAI real API", () => {
       );
       await eventCollector;
 
-      expect(session.state).toBe(SessionState.IDLE);
+      expect(
+        session.state === SessionState.IDLE || session.state === SessionState.AWAITING_INPUT,
+      ).toBe(true);
 
       const fileExists = await env.fileExists(join(tempDir, "hello.txt"));
       expect(fileExists).toBe(true);
@@ -322,7 +330,9 @@ describe("OpenAI real API", () => {
       );
       await eventCollector;
 
-      expect(session.state).toBe(SessionState.IDLE);
+      expect(
+        session.state === SessionState.IDLE || session.state === SessionState.AWAITING_INPUT,
+      ).toBe(true);
 
       const toolStarts = events.filter(
         (e) => e.kind === EventKind.TOOL_CALL_START,
@@ -384,7 +394,9 @@ describe("OpenAI real API", () => {
       );
       await eventCollector;
 
-      expect(session.state).toBe(SessionState.IDLE);
+      expect(
+        session.state === SessionState.IDLE || session.state === SessionState.AWAITING_INPUT,
+      ).toBe(true);
 
       const toolEnds = events.filter(
         (e) => e.kind === EventKind.TOOL_CALL_END,

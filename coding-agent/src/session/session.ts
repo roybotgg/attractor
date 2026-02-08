@@ -135,13 +135,8 @@ export class Session {
       this.gitContext = await this.gatherGitContext();
     }
 
-    // 4. Build system prompt (cached across tool rounds)
+    // 4. Prepare values needed for system prompt (git context gathered above)
     const providerFileNames = this.getProviderFileNames();
-    const projectDocs = await discoverProjectDocs(
-      this.executionEnv,
-      providerFileNames,
-      this.gitContext?.gitRoot,
-    );
     const envOptions: EnvironmentContextOptions = {
       isGitRepo: this.gitContext?.isGitRepo,
       gitBranch: this.gitContext?.branch,
@@ -149,19 +144,26 @@ export class Session {
       untrackedCount: this.gitContext?.untrackedCount,
       recentCommits: this.gitContext?.recentCommits,
       modelDisplayName: this.providerProfile.model,
+      knowledgeCutoff: this.providerProfile.knowledgeCutoff,
     };
-    const systemPrompt = this.providerProfile.buildSystemPrompt(
-      this.executionEnv,
-      projectDocs,
-      envOptions,
-      this.config.userInstructions,
-    );
 
     // 5. Loop
     let roundCount = 0;
     let hadLLMError = false;
 
     while (true) {
+      // 5a. Rebuild system prompt each tool round so project docs stay fresh
+      const projectDocs = await discoverProjectDocs(
+        this.executionEnv,
+        providerFileNames,
+        this.gitContext?.gitRoot,
+      );
+      const systemPrompt = this.providerProfile.buildSystemPrompt(
+        this.executionEnv,
+        projectDocs,
+        envOptions,
+        this.config.userInstructions,
+      );
       // a. Check max tool rounds
       if (roundCount >= this.config.maxToolRoundsPerInput) {
         this.emit(EventKind.TURN_LIMIT, {
@@ -309,10 +311,20 @@ export class Session {
       return;
     }
 
-    // 9. Set state
-    this.state = SessionState.IDLE;
+    // 9. Set state: if the last assistant message ends with '?' and had no tool
+    //    calls, the model is asking a question → AWAITING_INPUT; otherwise → IDLE.
+    const lastAssistant = this.history.findLast((t) => t.kind === "assistant");
+    const askedQuestion =
+      lastAssistant?.kind === "assistant" &&
+      lastAssistant.toolCalls.length === 0 &&
+      lastAssistant.content.trim().endsWith("?");
+    this.state = askedQuestion ? SessionState.AWAITING_INPUT : SessionState.IDLE;
 
     // 10. Emit INPUT_COMPLETE
+    // Spec pseudocode (§2.5) emits SESSION_END here, but the EventKind definition
+    // says "SESSION_END -- session closed (includes final state)". We emit
+    // INPUT_COMPLETE to signal one input cycle is done, and reserve SESSION_END
+    // for close() when the session is actually terminated.
     this.emit(EventKind.INPUT_COMPLETE);
   }
 

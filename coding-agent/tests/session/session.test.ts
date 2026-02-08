@@ -785,6 +785,39 @@ describe("Session", () => {
     expect(session.state).toBe(SessionState.CLOSED);
   });
 
+  test("question response transitions to AWAITING_INPUT state", async () => {
+    const { session } = createTestSession([
+      makeTextResponse("What file should I read?"),
+    ]);
+
+    await session.submit("Help me");
+
+    expect(session.state).toBe(SessionState.AWAITING_INPUT);
+  });
+
+  test("statement response transitions to IDLE state", async () => {
+    const { session } = createTestSession([
+      makeTextResponse("Here is the answer."),
+    ]);
+
+    await session.submit("Help me");
+
+    expect(session.state).toBe(SessionState.IDLE);
+  });
+
+  test("submit works from AWAITING_INPUT state", async () => {
+    const { session } = createTestSession([
+      makeTextResponse("Which file?"),
+      makeTextResponse("Got it, done."),
+    ]);
+
+    await session.submit("Help me");
+    expect(session.state).toBe(SessionState.AWAITING_INPUT);
+
+    await session.submit("foo.ts");
+    expect(session.state).toBe(SessionState.IDLE);
+  });
+
   test("streaming disabled falls back to complete()", async () => {
     const { session } = createTestSession([makeTextResponse("no stream")], {
       config: { enableStreaming: false },

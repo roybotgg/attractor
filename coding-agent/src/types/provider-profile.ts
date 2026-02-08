@@ -16,6 +16,7 @@ export interface ProviderProfile {
   id: string;
   model: string;
   toolRegistry: ToolRegistry;
+  knowledgeCutoff?: string;
   buildSystemPrompt(
     environment: ExecutionEnvironment,
     projectDocs: string,

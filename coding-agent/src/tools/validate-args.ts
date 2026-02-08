@@ -8,6 +8,8 @@
 
 interface SchemaProperty {
   type?: string;
+  enum?: unknown[];
+  items?: SchemaProperty;
 }
 
 interface ToolSchema {
@@ -47,22 +49,30 @@ export function validateToolArgs(
       continue; // allow extra properties
     }
 
-    if (propSchema.type === undefined) {
-      continue;
-    }
-
-    const typeError = checkType(value, propSchema.type, key);
+    const typeError = checkType(value, propSchema, key);
     if (typeError !== null) {
       return typeError;
+    }
+
+    // Check enum constraint
+    if (propSchema.enum !== undefined) {
+      if (!propSchema.enum.includes(value)) {
+        return `"${key}" must be one of [${propSchema.enum.map(String).join(", ")}], got ${JSON.stringify(value)}`;
+      }
     }
   }
 
   return null;
 }
 
-function checkType(value: unknown, expectedType: string, fieldName: string): string | null {
+function checkType(value: unknown, schema: SchemaProperty, fieldName: string): string | null {
   if (value === null || value === undefined) {
     return null; // null/undefined handled by required check
+  }
+
+  const expectedType = schema.type;
+  if (expectedType === undefined) {
+    return null;
   }
 
   switch (expectedType) {
@@ -84,6 +94,19 @@ function checkType(value: unknown, expectedType: string, fieldName: string): str
     case "boolean":
       if (typeof value !== "boolean") {
         return `expected "${fieldName}" to be boolean, got ${typeof value}`;
+      }
+      break;
+    case "array":
+      if (!Array.isArray(value)) {
+        return `expected "${fieldName}" to be array, got ${typeof value}`;
+      }
+      if (schema.items !== undefined) {
+        for (let i = 0; i < value.length; i++) {
+          const itemError = checkType(value[i], schema.items, `${fieldName}[${i}]`);
+          if (itemError !== null) {
+            return itemError;
+          }
+        }
       }
       break;
   }

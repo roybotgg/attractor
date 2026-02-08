@@ -51,6 +51,7 @@ export function createAnthropicProfile(
     id: "anthropic",
     model,
     toolRegistry: registry,
+    knowledgeCutoff: "April 2025",
 
     buildSystemPrompt(
       environment: ExecutionEnvironment,

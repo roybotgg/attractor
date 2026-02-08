@@ -29,6 +29,7 @@ export interface ExecutionEnvironment {
     timeoutMs: number,
     workingDir?: string,
     envVars?: Record<string, string>,
+    abortSignal?: AbortSignal,
   ): Promise<ExecResult>;
   grep(pattern: string, path: string, options?: GrepOptions): Promise<string>;
   glob(pattern: string, path?: string): Promise<string[]>;

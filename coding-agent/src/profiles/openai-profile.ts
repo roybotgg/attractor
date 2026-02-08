@@ -51,6 +51,7 @@ export function createOpenAIProfile(
     id: "openai",
     model,
     toolRegistry: registry,
+    knowledgeCutoff: "June 2025",
 
     buildSystemPrompt(
       environment: ExecutionEnvironment,
