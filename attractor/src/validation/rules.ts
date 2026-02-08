@@ -102,6 +102,16 @@ const terminalNodeRule: LintRule = {
         }),
       ];
     }
+    if (terminals.length > 1) {
+      return [
+        createDiagnostic({
+          rule: "terminal_node",
+          severity: Severity.ERROR,
+          message: `Pipeline must have exactly one terminal node, found ${terminals.length}.`,
+          fix: "Remove duplicate terminal nodes.",
+        }),
+      ];
+    }
     return [];
   },
 };
