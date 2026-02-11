@@ -28,8 +28,15 @@ const backend = new OpenClawBackend({
   sessionId: SESSION_ID,
 });
 
-// --- Parse pipeline ---
-const dotSource = readFileSync(DOT_FILE, "utf-8");
+// --- Parse pipeline (with env var expansion) ---
+let dotSource = readFileSync(DOT_FILE, "utf-8");
+
+// Expand $ENV_VAR references in the DOT source before parsing.
+// Matches $UPPER_CASE_VARS (letters, digits, underscores) — won't touch $goal (lowercase).
+dotSource = dotSource.replace(/\$([A-Z][A-Z0-9_]*)\b/g, (_match, varName) => {
+  return process.env[varName] ?? _match;
+});
+
 const graph = parse(dotSource);
 
 // --- Handler registry ---
