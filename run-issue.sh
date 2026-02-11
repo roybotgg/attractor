@@ -30,5 +30,14 @@ echo ""
 
 export ISSUE_NUMBER ISSUE_URL REPO_PATH REPO_SLUG
 
+# Default project board IDs for LocalRank.city (optional)
+if [[ "$REPO_SLUG" == "reymarx/localrank-city" ]]; then
+  export PROJECT_ID="PVT_kwHOACgTfs4BO4P2"
+  export STATUS_FIELD_ID="PVTSSF_lAHOACgTfs4BO4P2zg9c5jQ"
+  export STATUS_IN_PROGRESS_ID="47fc9ee4"
+  export STATUS_REVIEW_ID="354aa509"
+  export STATUS_DONE_ID="98236657"
+fi
+
 cd "$(dirname "$0")"
 exec bun run run.ts issue.dot
