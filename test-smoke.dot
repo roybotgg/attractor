@@ -1,0 +1,10 @@
+digraph Test {
+  graph [goal="List the files in src/app/api/ and summarize what each API route does"]
+
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+
+  scan [label="Scan", prompt="List the files in /home/rey/clawd/localrank-city/src/app/api/ and briefly describe what each route does. Be concise."]
+
+  start -> scan -> exit
+}

@@ -1,0 +1,16 @@
+digraph ContactForm {
+  graph [goal="Implement contact form on published pages + lead tracking (issue #57)"]
+
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+
+  plan [label="Plan", prompt="You are a coding agent working in /home/rey/clawd/localrank-city. Use the read tool to explore the codebase. Read: src/app/api/ directory structure, src/lib/cosmos.ts, src/lib/origin-check.ts, src/lib/rate-limit.ts, src/app/(public)/l/[slug]/page.tsx. Then output a detailed implementation plan for $goal with: (1) ContactForm client component, (2) POST /api/contact-submissions route, (3) CosmosDB storage, (4) lead counts in pages API, (5) tests."]
+
+  implement [label="Implement", prompt="You are a coding agent working in /home/rey/clawd/localrank-city. You MUST use the write and edit tools to create and modify files. Implement the contact form feature: (1) Create src/components/contact/ContactForm.tsx - a 'use client' component with name/email/phone/message fields, honeypot field tracked via useRef, form submission to /api/contact-submissions. (2) Create src/app/api/contact-submissions/route.ts - POST handler with Zod validation, requireSameOrigin, rateLimit (10/hr per IP+slug), honeypot check, CosmosDB upsert to contactSubmissions container partitioned by /businessId. Use nanoid for IDs. (3) Edit src/app/(public)/l/[slug]/page.tsx to import and render ContactForm. (4) Edit src/app/api/pages/route.ts to query contactSubmissions and add leadCount to each page. (5) Create src/__tests__/api-contact-submissions.test.ts with tests for invalid JSON, valid submission, honeypot rejection, rate limiting."]
+
+  test [label="Test", prompt="You are a coding agent working in /home/rey/clawd/localrank-city. Use the exec tool to run: cd /home/rey/clawd/localrank-city && npx jest --passWithNoTests 2>&1 | tail -30. If tests fail, use the edit tool to fix the issues. Then run: cd /home/rey/clawd/localrank-city && npx tsc --noEmit 2>&1 | tail -30. Fix any type errors."]
+
+  implement -> test [label="tests fail", condition="outcome=fail"]
+
+  start -> plan -> implement -> test -> exit
+}
