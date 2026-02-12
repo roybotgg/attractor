@@ -251,6 +251,123 @@ describe("OpenClawBackend", () => {
     }
   }, 10_000); // 10s test timeout
 
+  test("returns FAIL outcome when agent response contains STAGE_FAILED", async () => {
+    const jsonOutput = JSON.stringify({
+      status: "ok",
+      result: {
+        payloads: [
+          { text: "Tests still failing after 2 attempts.\n\nSTAGE_FAILED\n\nCould not resolve type errors in ContactForm.tsx" },
+        ],
+      },
+    });
+
+    const { writeFileSync, unlinkSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const script = join(tmpdir(), `openclaw-test-stage-failed-${Date.now()}.sh`);
+    writeFileSync(script, `#!/bin/bash\necho '${jsonOutput}'\n`);
+    chmodSync(script, 0o755);
+
+    try {
+      const backend = new OpenClawBackend({ command: script });
+      const result = await backend.run(makeNode("test"), "Run tests", new Context());
+      expect(isOutcome(result)).toBe(true);
+      if (isOutcome(result)) {
+        expect(result.status).toBe(StageStatus.FAIL);
+        expect(result.failureReason).toContain("STAGE_FAILED");
+        expect(result.failureReason).toContain("ContactForm.tsx");
+      }
+    } finally {
+      unlinkSync(script);
+    }
+  });
+
+  test("returns RETRY outcome when agent response contains STAGE_RETRY", async () => {
+    const jsonOutput = JSON.stringify({
+      status: "ok",
+      result: {
+        payloads: [
+          { text: "Partial progress but need another pass. STAGE_RETRY" },
+        ],
+      },
+    });
+
+    const { writeFileSync, unlinkSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const script = join(tmpdir(), `openclaw-test-stage-retry-${Date.now()}.sh`);
+    writeFileSync(script, `#!/bin/bash\necho '${jsonOutput}'\n`);
+    chmodSync(script, 0o755);
+
+    try {
+      const backend = new OpenClawBackend({ command: script });
+      const result = await backend.run(makeNode("test"), "Run tests", new Context());
+      expect(isOutcome(result)).toBe(true);
+      if (isOutcome(result)) {
+        expect(result.status).toBe(StageStatus.RETRY);
+        expect(result.failureReason).toContain("STAGE_RETRY");
+      }
+    } finally {
+      unlinkSync(script);
+    }
+  });
+
+  test("STAGE_FAILED is case-insensitive", async () => {
+    const jsonOutput = JSON.stringify({
+      status: "ok",
+      result: {
+        payloads: [
+          { text: "Could not fix. stage_failed" },
+        ],
+      },
+    });
+
+    const { writeFileSync, unlinkSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const script = join(tmpdir(), `openclaw-test-case-${Date.now()}.sh`);
+    writeFileSync(script, `#!/bin/bash\necho '${jsonOutput}'\n`);
+    chmodSync(script, 0o755);
+
+    try {
+      const backend = new OpenClawBackend({ command: script });
+      const result = await backend.run(makeNode("test"), "prompt", new Context());
+      expect(isOutcome(result)).toBe(true);
+      if (isOutcome(result)) {
+        expect(result.status).toBe(StageStatus.FAIL);
+      }
+    } finally {
+      unlinkSync(script);
+    }
+  });
+
+  test("response without STAGE_FAILED returns success string", async () => {
+    const jsonOutput = JSON.stringify({
+      status: "ok",
+      result: {
+        payloads: [
+          { text: "All 15 tests passing. Types clean. Lint clean." },
+        ],
+      },
+    });
+
+    const { writeFileSync, unlinkSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const script = join(tmpdir(), `openclaw-test-success-${Date.now()}.sh`);
+    writeFileSync(script, `#!/bin/bash\necho '${jsonOutput}'\n`);
+    chmodSync(script, 0o755);
+
+    try {
+      const backend = new OpenClawBackend({ command: script });
+      const result = await backend.run(makeNode("test"), "prompt", new Context());
+      expect(typeof result).toBe("string");
+      expect(result as string).toContain("All 15 tests passing");
+    } finally {
+      unlinkSync(script);
+    }
+  });
+
   test("passes session-id, thinking, and timeout args", async () => {
     // Script that outputs its own argv as JSON so we can verify args
     const { writeFileSync, unlinkSync, chmodSync } = await import("node:fs");

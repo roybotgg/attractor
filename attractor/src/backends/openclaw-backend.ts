@@ -121,7 +121,32 @@ export class OpenClawBackend implements CodergenBackend {
           const texts = payloads
             .map((p: any) => p.text)
             .filter((t: any) => typeof t === "string" && t.length > 0);
-          resolve(texts.join("\n") || stdout);
+          const fullResponse = texts.join("\n") || stdout;
+
+          // Check for explicit failure/retry markers in agent output.
+          // This enables Attractor's conditional edge routing (e.g. test -> implement
+          // on outcome=fail) instead of always returning SUCCESS.
+          const upperResponse = fullResponse.toUpperCase();
+          if (upperResponse.includes("STAGE_FAILED")) {
+            resolve(
+              createOutcome({
+                status: StageStatus.FAIL,
+                failureReason: fullResponse.slice(0, 1000),
+              }),
+            );
+            return;
+          }
+          if (upperResponse.includes("STAGE_RETRY")) {
+            resolve(
+              createOutcome({
+                status: StageStatus.RETRY,
+                failureReason: fullResponse.slice(0, 1000),
+              }),
+            );
+            return;
+          }
+
+          resolve(fullResponse);
         } catch {
           // If not valid JSON, return raw stdout
           resolve(stdout);
