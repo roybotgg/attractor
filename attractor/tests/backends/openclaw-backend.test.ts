@@ -21,6 +21,8 @@ function isOutcome(result: string | Outcome): result is Outcome {
  * Tests use `bash -c` as the command to simulate openclaw CLI output.
  * The backend passes args as: agent --json --message <prompt> [--session-id ...] [--thinking ...] [--timeout ...]
  * bash -c ignores these args and just runs the inline script.
+ *
+ * NOTE: These tests require bash/Unix and will not run on Windows.
  */
 
 describe("OpenClawBackend", () => {

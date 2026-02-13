@@ -10,7 +10,7 @@ import {
   ConditionalHandler,
   PipelineEventEmitter,
   PipelineEventKind,
-} from "./attractor/src/index.js";
+} from "./attractor/src/index.ts";
 import { OpenClawBackend } from "./attractor/src/backends/openclaw-backend.ts";
 
 // --- Config ---

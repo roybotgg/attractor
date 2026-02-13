@@ -141,10 +141,10 @@ export class OpenClawBackend implements CodergenBackend {
             return;
           }
           // Extract text from payloads array
-          const payloads = result.result?.payloads || [];
+          const payloads: Array<Record<string, unknown>> = result.result?.payloads || [];
           const texts = payloads
-            .map((p: any) => p.text)
-            .filter((t: any) => typeof t === "string" && t.length > 0);
+            .map((p: Record<string, unknown>) => p.text)
+            .filter((t: unknown): t is string => typeof t === "string" && (t as string).length > 0);
           const fullResponse = texts.join("\n") || stdout;
 
           // Check for explicit failure/retry markers in agent output.
@@ -191,6 +191,11 @@ export class OpenClawBackend implements CodergenBackend {
    * The `openclaw agent` CLI resolves sessions by matching the --session-id
    * value against sessionId fields in the store. When modelOverride is set
    * on a session entry, the gateway uses that model for inference.
+   *
+  /**
+   * Patches the session store with modelOverride for the given session.
+   * Uses synchronous FS reads/writes — safe given sequential pipeline execution,
+   * but would race if stages were parallelized. Keep sequential unless adding file locking.
    *
    * This is the same mechanism used by the `session_status` tool and
    * `sessions_spawn` to set per-session models.
