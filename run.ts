@@ -58,6 +58,9 @@ const emitter = new PipelineEventEmitter();
     if (event.kind === PipelineEventKind.STAGE_COMPLETED) {
       console.log(`[${ts}]  ✓ Completed: ${event.data["nodeId"]} (${event.data["status"]})`);
     }
+    if (event.kind === PipelineEventKind.STAGE_RETRYING) {
+      console.log(`[${ts}]  ⟳ Retrying: ${event.data["nodeId"]} (attempt ${event.data["attempt"]})`);
+    }
     if (event.kind === PipelineEventKind.PIPELINE_COMPLETED) {
       console.log(`[${ts}]\n✅ Pipeline finished: ${event.data["status"]}`);
     }

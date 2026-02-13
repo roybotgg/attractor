@@ -3,6 +3,7 @@ import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
 import type { CodergenBackend, BackendRunOptions } from "../types/handler.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
+import { getStringAttr } from "../types/graph.js";
 import { spawn } from "node:child_process";
 
 export interface OpenClawBackendConfig {
@@ -35,15 +36,20 @@ export class OpenClawBackend implements CodergenBackend {
     _context: Context,
     _options?: BackendRunOptions,
   ): Promise<string | Outcome> {
-    const args = ["agent", "--json", "--message", prompt];
+    // Determine model for this node: node attribute > config > undefined
+    const nodeModel = getStringAttr(node.attributes, "model", "");
+    const effectiveModel = nodeModel || this.config.model;
 
-    if (this.config.model) {
-      // Use session-id to set model via the gateway
-      // The model is set per-session, so we pass it as part of the session
+    // If node specifies its own model, use a unique session ID to avoid conflicts
+    let sessionId = this.config.sessionId;
+    if (nodeModel && sessionId) {
+      sessionId = `${sessionId}-${node.id}`;
     }
 
-    if (this.config.sessionId) {
-      args.push("--session-id", this.config.sessionId);
+    const args = ["agent", "--json", "--message", prompt];
+
+    if (sessionId) {
+      args.push("--session-id", sessionId);
     }
 
     if (this.config.thinking) {
@@ -56,9 +62,16 @@ export class OpenClawBackend implements CodergenBackend {
 
     const timeoutMs = (this.config.timeoutSeconds ?? 600) * 1000 + 5000; // extra 5s buffer
 
+    // Set model via environment variable (openclaw respects OPENCLAW_MODEL)
+    const env = { ...process.env };
+    if (effectiveModel) {
+      env.OPENCLAW_MODEL = effectiveModel;
+      console.log(`[OpenClaw] Node ${node.id}: using model="${effectiveModel}", session="${sessionId}"`);
+    }
+
     return new Promise<string | Outcome>((resolve) => {
       const child = spawn(this.config.command ?? "openclaw", args, {
-        env: process.env,
+        env,
         stdio: ["pipe", "pipe", "pipe"],
       });
 
