@@ -7,3 +7,5 @@ export type { CliAgentConfig } from "./cli-backend.js";
 export { ClaudeCodeBackend } from "./claude-code-backend.js";
 export { CodexBackend } from "./codex-backend.js";
 export { GeminiBackend } from "./gemini-backend.js";
+export { OpenClawBackend } from "./openclaw-backend.js";
+export type { OpenClawBackendConfig } from "./openclaw-backend.js";
