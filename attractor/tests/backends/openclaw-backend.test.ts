@@ -403,4 +403,143 @@ echo '{"status":"ok","result":{"payloads":[{"text":"args received"}]}}'
       unlinkSync(script);
     }
   });
+
+  test("per-node model patches session store with modelOverride", async () => {
+    const { writeFileSync, unlinkSync, chmodSync, readFileSync, mkdirSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    // Create a temp state dir to simulate ~/.openclaw
+    const stateDir = join(tmpdir(), `openclaw-test-state-${Date.now()}`);
+    const sessionsDir = join(stateDir, "agents", "main", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "sessions.json"), "{}");
+
+    // Create script that returns success
+    const script = join(tmpdir(), `openclaw-test-model-${Date.now()}.sh`);
+    writeFileSync(
+      script,
+      `#!/bin/bash\necho '{"status":"ok","result":{"payloads":[{"text":"done"}]}}'\n`,
+    );
+    chmodSync(script, 0o755);
+
+    try {
+      const backend = new OpenClawBackend({
+        command: script,
+        sessionId: "pipeline-123",
+        model: "normal",
+        stateDir,
+      });
+
+      // Node with a per-node model override
+      const node = makeNode("test", { model: "quick", prompt: "run tests" });
+      await backend.run(node, "run tests", new Context());
+
+      // Verify the session store was patched
+      const store = JSON.parse(readFileSync(join(sessionsDir, "sessions.json"), "utf-8"));
+
+      // Should have created an entry with the node-specific session id
+      const expectedKey = "agent:main:cli:pipeline-123-test";
+      expect(store[expectedKey]).toBeDefined();
+      expect(store[expectedKey].modelOverride).toBe("quick");
+      expect(store[expectedKey].sessionId).toBe("pipeline-123-test");
+    } finally {
+      unlinkSync(script);
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("per-node model updates existing session entry", async () => {
+    const { writeFileSync, unlinkSync, chmodSync, readFileSync, mkdirSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const stateDir = join(tmpdir(), `openclaw-test-state2-${Date.now()}`);
+    const sessionsDir = join(stateDir, "agents", "main", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+
+    // Pre-populate with an existing session entry
+    const existingStore = {
+      "agent:main:cli:pipeline-456-implement": {
+        sessionId: "pipeline-456-implement",
+        modelOverride: "normal",
+        updatedAt: 1000,
+        someOtherField: "preserved",
+      },
+    };
+    writeFileSync(join(sessionsDir, "sessions.json"), JSON.stringify(existingStore));
+
+    const script = join(tmpdir(), `openclaw-test-model2-${Date.now()}.sh`);
+    writeFileSync(
+      script,
+      `#!/bin/bash\necho '{"status":"ok","result":{"payloads":[{"text":"done"}]}}'\n`,
+    );
+    chmodSync(script, 0o755);
+
+    try {
+      const backend = new OpenClawBackend({
+        command: script,
+        sessionId: "pipeline-456",
+        model: "deep",
+        stateDir,
+      });
+
+      // Node "implement" already has a session entry — should update, not create
+      const node = makeNode("implement", { model: "deep", prompt: "implement code" });
+      await backend.run(node, "implement code", new Context());
+
+      const store = JSON.parse(readFileSync(join(sessionsDir, "sessions.json"), "utf-8"));
+      const entry = store["agent:main:cli:pipeline-456-implement"];
+      expect(entry).toBeDefined();
+      expect(entry.modelOverride).toBe("deep");
+      expect(entry.someOtherField).toBe("preserved"); // Existing fields preserved
+      expect(entry.updatedAt).toBeGreaterThan(1000); // Updated timestamp
+    } finally {
+      unlinkSync(script);
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("pipeline-level model patches session store without node model attr", async () => {
+    const { writeFileSync, unlinkSync, chmodSync, readFileSync, mkdirSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const stateDir = join(tmpdir(), `openclaw-test-state3-${Date.now()}`);
+    const sessionsDir = join(stateDir, "agents", "main", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "sessions.json"), "{}");
+
+    const script = join(tmpdir(), `openclaw-test-model3-${Date.now()}.sh`);
+    writeFileSync(
+      script,
+      `#!/bin/bash\necho '{"status":"ok","result":{"payloads":[{"text":"done"}]}}'\n`,
+    );
+    chmodSync(script, 0o755);
+
+    try {
+      const backend = new OpenClawBackend({
+        command: script,
+        sessionId: "pipeline-789",
+        model: "normal",  // Pipeline-level model
+        stateDir,
+      });
+
+      // Node WITHOUT a per-node model — should use pipeline-level model
+      // and keep the original session ID (no suffix)
+      const node = makeNode("plan", { prompt: "create plan" });
+      await backend.run(node, "create plan", new Context());
+
+      const store = JSON.parse(readFileSync(join(sessionsDir, "sessions.json"), "utf-8"));
+
+      // Session ID should NOT have node suffix (no per-node model)
+      const key = "agent:main:cli:pipeline-789";
+      expect(store[key]).toBeDefined();
+      expect(store[key].modelOverride).toBe("normal");
+      expect(store[key].sessionId).toBe("pipeline-789");
+    } finally {
+      unlinkSync(script);
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });
