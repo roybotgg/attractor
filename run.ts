@@ -12,6 +12,7 @@ import {
   PipelineEventKind,
 } from "./attractor/src/index.ts";
 import { OpenClawBackend } from "./attractor/src/backends/openclaw-backend.ts";
+import { CxdbStore } from "./attractor/src/cxdb/store.ts";
 
 // --- Config ---
 const MODEL = process.env.ATTRACTOR_MODEL || "normal"; // Sonnet 4.5 by default
@@ -19,6 +20,12 @@ const THINKING = process.env.ATTRACTOR_THINKING || "low";
 const TIMEOUT = parseInt(process.env.ATTRACTOR_TIMEOUT || "600", 10);
 const DOT_FILE = process.argv[2] || "pipeline.dot";
 const SESSION_ID = process.env.ATTRACTOR_SESSION_ID || `attractor-${randomUUID().slice(0, 8)}`;
+
+// CXDB config (set CXDB_ENABLED=1 to activate)
+const CXDB_ENABLED = process.env.CXDB_ENABLED === "1";
+const CXDB_HOST = process.env.CXDB_HOST || "localhost";
+const CXDB_PORT = parseInt(process.env.CXDB_PORT || "9009", 10);
+const CXDB_HTTP_PORT = parseInt(process.env.CXDB_HTTP_PORT || "9008", 10);
 
 // --- Backend (OpenClaw agent CLI) ---
 const backend = new OpenClawBackend({
@@ -71,21 +78,46 @@ const emitter = new PipelineEventEmitter();
 })();
 
 // --- Run ---
+const cxdbStore = CXDB_ENABLED
+  ? new CxdbStore({ host: CXDB_HOST, port: CXDB_PORT, httpPort: CXDB_HTTP_PORT })
+  : undefined;
+
 const runner = new PipelineRunner({
   handlerRegistry: registry,
   backend,
   eventEmitter: emitter,
+  cxdbStore,
 });
 
 console.log(`Pipeline: ${DOT_FILE}`);
 console.log(`Model: ${MODEL} | Thinking: ${THINKING} | Session: ${SESSION_ID}`);
+if (CXDB_ENABLED) {
+  console.log(`CXDB: ${CXDB_HOST}:${CXDB_PORT} (tracking enabled)`);
+}
 console.log("");
 
 try {
+  if (cxdbStore) {
+    await cxdbStore.connect();
+  }
   const result = await runner.run(graph);
   console.log(`\nOutcome: ${result.outcome.status}`);
   console.log(`Nodes completed: ${result.completedNodes.join(", ")}`);
+  if (cxdbStore) {
+    const ctxId = cxdbStore.getContextId();
+    if (ctxId !== null) {
+      console.log(`CXDB context: ${ctxId.toString()}`);
+    }
+    cxdbStore.close();
+  }
 } catch (err) {
   console.error("Pipeline error:", err);
+  if (cxdbStore) {
+    const ctxId = cxdbStore.getContextId();
+    if (ctxId !== null) {
+      console.log(`CXDB context: ${ctxId.toString()}`);
+    }
+    cxdbStore.close();
+  }
   process.exit(1);
 }

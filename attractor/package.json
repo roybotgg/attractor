@@ -8,8 +8,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "unified-llm": "workspace:*",
-    "coding-agent": "workspace:*"
+    "@msgpack/msgpack": "^3.1.3",
+    "@noble/hashes": "^2.0.1",
+    "coding-agent": "workspace:*",
+    "unified-llm": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

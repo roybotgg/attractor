@@ -7,6 +7,7 @@ import type { CodergenBackend } from "../types/handler.js";
 import type { PipelineEvent, PipelineEventKind, PipelineEventDataMap } from "../types/events.js";
 import type { Transform } from "../types/transform.js";
 import type { LintRule } from "../types/diagnostic.js";
+import type { CxdbStore } from "../cxdb/store.js";
 import { Context } from "../types/context.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
 import { PipelineEventKind as EventKind } from "../types/events.js";
@@ -98,6 +99,8 @@ export interface PipelineRunnerConfig {
   onCheckpoint?: (checkpoint: Checkpoint) => void;
   logsRoot?: string;
   cleanup?: () => Promise<void>;
+  /** Optional CXDB store for persisting pipeline runs to the turn DAG. */
+  cxdbStore?: CxdbStore;
 }
 
 export interface PipelineResult {
@@ -200,6 +203,16 @@ export class PipelineRunner {
     };
 
     this.emitEvent(EventKind.PIPELINE_STARTED, { graphName: graph.name });
+
+    // Initialize CXDB tracking if configured
+    await this.safeCxdb("onPipelineStart", () =>
+      this.config.cxdbStore!.onPipelineStart({
+        pipelineId: this.pipelineId,
+        graphName: graph.name,
+        goal: getStringAttr(graph.attributes, "goal"),
+      }),
+    );
+
     try {
       await mkdir(logsRoot, { recursive: true });
       const manifest = {
@@ -418,6 +431,15 @@ export class PipelineRunner {
         status: outcome.status,
       });
 
+      // Track stage completion in CXDB
+      await this.safeCxdb("onStageComplete", () =>
+        this.config.cxdbStore!.onStageComplete(
+          currentNode.id,
+          outcome,
+          retryResult.attempts,
+        ),
+      );
+
       // Step 4: Apply context updates
       context.applyUpdates(outcome.contextUpdates);
       context.set("outcome", outcome.status);
@@ -603,8 +625,24 @@ export class PipelineRunner {
     } catch {
       // Checkpoint save failure is non-fatal
     }
+    // Persist checkpoint to CXDB
+    await this.safeCxdb("onCheckpointSave", () =>
+      this.config.cxdbStore!.onCheckpointSave(checkpoint),
+    );
     if (this.config.onCheckpoint) {
       this.config.onCheckpoint(checkpoint);
+    }
+  }
+
+  /** Run a CXDB operation non-fatally. Logs errors at debug level. */
+  private async safeCxdb(op: string, fn: () => Promise<unknown>): Promise<void> {
+    if (!this.config.cxdbStore) return;
+    try {
+      await fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Debug-level: observable but non-fatal
+      console.debug(`[cxdb] ${op} failed: ${msg}`);
     }
   }
 

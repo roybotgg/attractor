@@ -89,3 +89,7 @@ export { createServer } from "./server/index.js";
 export type { ServerConfig, AttractorServer, RouteContext, PipelineRecord } from "./server/index.js";
 export { handleRequest } from "./server/index.js";
 export { createSSEStream } from "./server/index.js";
+
+// CXDB
+export { CxdbClient, CxdbStore, CxdbServerError, CxdbClientError, TypeIds, TypeVersions, MsgType, Encoding, Compression } from "./cxdb/index.js";
+export type { CxdbClientOptions, CxdbStoreOptions, PipelineRunInfo, ContextHead, AppendRequest, AppendResult, TurnRecord, PipelineRunData, StageResultData, CheckpointData, StageLogData } from "./cxdb/index.js";
