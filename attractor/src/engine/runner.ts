@@ -7,6 +7,7 @@ import type { CodergenBackend } from "../types/handler.js";
 import type { PipelineEvent, PipelineEventKind, PipelineEventDataMap } from "../types/events.js";
 import type { Transform } from "../types/transform.js";
 import type { LintRule } from "../types/diagnostic.js";
+import type { CxdbStore } from "../cxdb/store.js";
 import { Context } from "../types/context.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
 import { PipelineEventKind as EventKind } from "../types/events.js";
@@ -98,6 +99,8 @@ export interface PipelineRunnerConfig {
   onCheckpoint?: (checkpoint: Checkpoint) => void;
   logsRoot?: string;
   cleanup?: () => Promise<void>;
+  /** Optional CXDB store for persisting pipeline runs to the turn DAG. */
+  cxdbStore?: CxdbStore;
 }
 
 export interface PipelineResult {
@@ -200,6 +203,20 @@ export class PipelineRunner {
     };
 
     this.emitEvent(EventKind.PIPELINE_STARTED, { graphName: graph.name });
+
+    // Initialize CXDB tracking if configured
+    if (this.config.cxdbStore) {
+      try {
+        await this.config.cxdbStore.onPipelineStart({
+          pipelineId: this.pipelineId,
+          graphName: graph.name,
+          goal: getStringAttr(graph.attributes, "goal"),
+        });
+      } catch {
+        // CXDB tracking failure is non-fatal
+      }
+    }
+
     try {
       await mkdir(logsRoot, { recursive: true });
       const manifest = {
@@ -418,6 +435,19 @@ export class PipelineRunner {
         status: outcome.status,
       });
 
+      // Track stage completion in CXDB
+      if (this.config.cxdbStore) {
+        try {
+          await this.config.cxdbStore.onStageComplete(
+            currentNode.id,
+            outcome,
+            retryResult.attempts,
+          );
+        } catch {
+          // CXDB tracking failure is non-fatal
+        }
+      }
+
       // Step 4: Apply context updates
       context.applyUpdates(outcome.contextUpdates);
       context.set("outcome", outcome.status);
@@ -602,6 +632,14 @@ export class PipelineRunner {
       });
     } catch {
       // Checkpoint save failure is non-fatal
+    }
+    // Persist checkpoint to CXDB
+    if (this.config.cxdbStore) {
+      try {
+        await this.config.cxdbStore.onCheckpointSave(checkpoint);
+      } catch {
+        // CXDB tracking failure is non-fatal
+      }
     }
     if (this.config.onCheckpoint) {
       this.config.onCheckpoint(checkpoint);
