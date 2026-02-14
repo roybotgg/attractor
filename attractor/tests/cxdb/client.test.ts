@@ -5,7 +5,7 @@
  * Skip with: CXDB_SKIP_INTEGRATION=1 bun test
  */
 
-import { describe, test, expect, afterAll, beforeEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach } from "bun:test";
 import { CxdbClient } from "../../src/cxdb/client.js";
 import { encode as msgpackEncode, decode as msgpackDecode } from "@msgpack/msgpack";
 
@@ -21,7 +21,7 @@ describe.skipIf(SKIP)("CxdbClient (integration)", () => {
     await client.connect(CXDB_HOST, CXDB_PORT);
   });
 
-  afterAll(() => {
+  afterEach(() => {
     client?.close();
   });
 

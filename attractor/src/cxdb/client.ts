@@ -145,6 +145,17 @@ function parseFrameHeader(buf: Buffer): {
 
 // --- Client ---
 
+/**
+ * CXDB binary protocol client.
+ *
+ * This client uses a single pending request model — only one request/response
+ * can be in-flight at a time per connection. Do not issue concurrent operations
+ * on the same client instance. For parallel workloads, create multiple clients.
+ *
+ * The receive buffer grows via Buffer.concat on each data chunk. This is fine
+ * for short-lived pipeline runs but not ideal for long-lived connections with
+ * large payloads. Consider a ring buffer if this becomes a hot path.
+ */
 export class CxdbClient {
   private socket: Socket | null = null;
   private reqIdCounter = 0n;

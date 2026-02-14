@@ -112,6 +112,12 @@ try {
   }
 } catch (err) {
   console.error("Pipeline error:", err);
-  if (cxdbStore) cxdbStore.close();
+  if (cxdbStore) {
+    const ctxId = cxdbStore.getContextId();
+    if (ctxId !== null) {
+      console.log(`CXDB context: ${ctxId.toString()}`);
+    }
+    cxdbStore.close();
+  }
   process.exit(1);
 }

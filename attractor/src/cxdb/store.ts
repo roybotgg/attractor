@@ -143,7 +143,7 @@ export class CxdbStore {
       notes: outcome.notes || undefined,
       failureReason: outcome.failureReason || undefined,
       contextUpdates:
-        Object.keys(outcome.contextUpdates).length > 0
+        outcome.contextUpdates && Object.keys(outcome.contextUpdates).length > 0
           ? (outcome.contextUpdates as Record<string, string | number | boolean>)
           : undefined,
       completedAt: new Date().toISOString(),
@@ -194,13 +194,13 @@ export class CxdbStore {
     this.ensureConnected();
     this.ensureContext();
 
+    const eventData = event.data as Record<string, unknown> | undefined;
+
     const data: StageLogData = {
       eventKind: event.kind,
-      nodeId: (event.data as Record<string, unknown>)?.nodeId as
-        | string
-        | undefined,
+      nodeId: eventData?.nodeId as string | undefined,
       timestamp: event.timestamp.toISOString(),
-      data: event.data as Record<string, unknown>,
+      data: eventData,
     };
 
     return this.client.append(
