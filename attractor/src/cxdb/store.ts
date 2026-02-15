@@ -11,6 +11,7 @@ import type { ContextHead, AppendResult } from "./client.js";
 import {
   TypeIds,
   TypeVersions,
+  toTagged,
   type PipelineRunData,
   type StageResultData,
   type CheckpointData,
@@ -116,7 +117,7 @@ export class CxdbStore {
       this.contextId,
       TypeIds.PIPELINE_RUN,
       TypeVersions[TypeIds.PIPELINE_RUN],
-      data,
+      toTagged(TypeIds.PIPELINE_RUN, data as unknown as Record<string, unknown>),
     );
 
     return head;
@@ -153,7 +154,7 @@ export class CxdbStore {
       this.contextId!,
       TypeIds.STAGE_RESULT,
       TypeVersions[TypeIds.STAGE_RESULT],
-      data,
+      toTagged(TypeIds.STAGE_RESULT, data as unknown as Record<string, unknown>),
     );
   }
 
@@ -183,7 +184,7 @@ export class CxdbStore {
       this.contextId!,
       TypeIds.CHECKPOINT,
       TypeVersions[TypeIds.CHECKPOINT],
-      data,
+      toTagged(TypeIds.CHECKPOINT, data as unknown as Record<string, unknown>),
     );
   }
 
@@ -207,7 +208,7 @@ export class CxdbStore {
       this.contextId!,
       TypeIds.STAGE_LOG,
       TypeVersions[TypeIds.STAGE_LOG],
-      data,
+      toTagged(TypeIds.STAGE_LOG, data as unknown as Record<string, unknown>),
     );
   }
 
