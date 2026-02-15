@@ -432,11 +432,14 @@ export class PipelineRunner {
       });
 
       // Track stage completion in CXDB
+      const nodeModel = getStringAttr(currentNode.attributes, "model", "");
       await this.safeCxdb("onStageComplete", () =>
         this.config.cxdbStore!.onStageComplete(
           currentNode.id,
           outcome,
           retryResult.attempts,
+          undefined,
+          nodeModel || undefined,
         ),
       );
 

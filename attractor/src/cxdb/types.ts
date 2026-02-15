@@ -24,7 +24,7 @@ export type TypeId = (typeof TypeIds)[keyof typeof TypeIds];
 
 export const TypeVersions: Record<TypeId, number> = {
   [TypeIds.PIPELINE_RUN]: 1,
-  [TypeIds.STAGE_RESULT]: 1,
+  [TypeIds.STAGE_RESULT]: 2,
   [TypeIds.CHECKPOINT]: 1,
   [TypeIds.STAGE_LOG]: 1,
 };
@@ -54,6 +54,7 @@ export const FieldTags = {
     failureReason: 6,
     contextUpdates: 7,
     completedAt: 8,
+    model: 9,
   } as Record<string, number>,
 
   [TypeIds.CHECKPOINT]: {
@@ -121,6 +122,7 @@ export interface StageResultData {
   failureReason?: string;
   contextUpdates?: Record<string, string | number | boolean>;
   completedAt: string; // ISO-8601
+  model?: string;
 }
 
 /** Full checkpoint snapshot for resume capability. */

@@ -132,6 +132,7 @@ export class CxdbStore {
     outcome: Outcome,
     attempts: number,
     durationMs?: number,
+    model?: string,
   ): Promise<AppendResult> {
     this.ensureConnected();
     this.ensureContext();
@@ -148,6 +149,7 @@ export class CxdbStore {
           ? (outcome.contextUpdates as Record<string, string | number | boolean>)
           : undefined,
       completedAt: new Date().toISOString(),
+      model: model || undefined,
     };
 
     return this.client.append(
