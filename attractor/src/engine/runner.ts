@@ -11,7 +11,7 @@ import type { CxdbStore } from "../cxdb/store.js";
 import { Context } from "../types/context.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
 import { PipelineEventKind as EventKind } from "../types/events.js";
-import { getStringAttr, getBooleanAttr, getDurationAttr, attrToString } from "../types/graph.js";
+import { getStringAttr, getIntegerAttr, getBooleanAttr, getDurationAttr, attrToString } from "../types/graph.js";
 import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, executeWithRetry } from "./retry.js";
 import { checkGoalGates, getRetryTarget } from "./goal-gates.js";
@@ -424,6 +424,36 @@ export class PipelineRunner {
           graph,
         );
         context.set("_fidelity.preamble", preamble);
+      }
+
+      // max_visits enforcement: bound graph-level loops (distinct from per-node max_retries)
+      const maxVisits = getIntegerAttr(currentNode.attributes, "max_visits", 0);
+      if (maxVisits > 0) {
+        const visitCount = completedNodes.filter((id) => id === currentNode.id).length;
+        if (visitCount >= maxVisits) {
+          const reason = `Node "${currentNode.id}" exceeded max_visits=${maxVisits}`;
+          const failOutcome = createOutcome({
+            status: StageStatus.FAIL,
+            failureReason: reason,
+          });
+          this.emitEvent(EventKind.STAGE_FAILED, { nodeId: currentNode.id, reason, willRetry: false });
+          completedNodes.push(currentNode.id);
+          nodeOutcomes.set(currentNode.id, failOutcome);
+          lastOutcome = failOutcome;
+          // Follow normal failure routing (fail edge → retry_target → terminate)
+          const failEdge = selectEdge(currentNode, failOutcome, context, graph);
+          if (failEdge) {
+            const nextNode = graph.nodes.get(failEdge.to);
+            if (nextNode) {
+              previousNodeId = currentNode.id;
+              currentIncomingEdge = failEdge;
+              currentNode = nextNode;
+              continue;
+            }
+          }
+          this.emitEvent(EventKind.PIPELINE_FAILED, { reason, nodeId: currentNode.id });
+          return { outcome: failOutcome, completedNodes, context, artifactStore };
+        }
       }
 
       // Step 2: Execute node handler with retry policy
