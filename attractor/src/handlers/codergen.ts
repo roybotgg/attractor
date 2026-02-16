@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
 import type { Handler, CodergenBackend, BackendRunOptions } from "../types/handler.js";
 import type { Node, Graph } from "../types/graph.js";
 import type { Context } from "../types/context.js";
@@ -9,7 +9,12 @@ import { StageStatus, createOutcome } from "../types/outcome.js";
 
 function expandVariables(prompt: string, graph: Graph, _context: Context): string {
   const goal = getStringAttr(graph.attributes, "goal");
-  return prompt.replace(/\$goal/g, goal);
+  let result = prompt.replace(/\$goal/g, goal);
+  // Expand $ENV_VAR references (uppercase vars only, matching run.ts behavior)
+  result = result.replace(/\$([A-Z][A-Z0-9_]*)\b/g, (_match, varName) => {
+    return process.env[varName] ?? _match;
+  });
+  return result;
 }
 
 export class CodergenHandler implements Handler {
@@ -20,8 +25,18 @@ export class CodergenHandler implements Handler {
   }
 
   async execute(node: Node, context: Context, graph: Graph, logsRoot: string): Promise<Outcome> {
-    // 1. Build prompt
-    let prompt = getStringAttr(node.attributes, "prompt");
+    // 1. Build prompt — prefer prompt_file over inline prompt
+    let prompt = "";
+    const promptFile = getStringAttr(node.attributes, "prompt_file");
+    if (promptFile) {
+      // Resolve relative to the DOT file's directory (graph.source_path) or cwd
+      const sourcePath = getStringAttr(graph.attributes, "source_path");
+      const base = sourcePath ? dirname(sourcePath) : process.cwd();
+      const fullPath = resolve(base, promptFile);
+      prompt = readFileSync(fullPath, "utf-8");
+    } else {
+      prompt = getStringAttr(node.attributes, "prompt");
+    }
     if (prompt === "") {
       prompt = getStringAttr(node.attributes, "label", node.id);
     }
