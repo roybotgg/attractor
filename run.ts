@@ -15,7 +15,7 @@ import { OpenClawBackend } from "./attractor/src/backends/openclaw-backend.ts";
 import { CxdbStore } from "./attractor/src/cxdb/store.ts";
 
 // --- Config ---
-const MODEL = process.env.ATTRACTOR_MODEL || "normal"; // Sonnet 4.5 by default
+const MODEL = process.env.ATTRACTOR_MODEL || "default"; // gpt-5.2-codex by default
 const THINKING = process.env.ATTRACTOR_THINKING || "low";
 const TIMEOUT = parseInt(process.env.ATTRACTOR_TIMEOUT || "600", 10);
 const DOT_FILE = process.argv[2] || "pipeline.dot";
