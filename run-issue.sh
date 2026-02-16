@@ -90,20 +90,65 @@ fi
 
 cd "$(dirname "$0")"
 
-# Run the pipeline — on exit, clean up the worktree
+# --- Project Board Automation ---
+move_to_status() {
+  local status_id="$1"
+  local label="$2"
+  if [ -z "${PROJECT_ID:-}" ] || [ -z "${STATUS_FIELD_ID:-}" ] || [ -z "$status_id" ]; then
+    return 0
+  fi
+  local node_id
+  node_id=$(gh api "repos/${REPO_SLUG}/issues/${ISSUE_NUMBER}" --jq '.node_id' 2>/dev/null) || return 0
+  local item_id
+  item_id=$(gh api graphql -f query='mutation {
+    addProjectV2ItemById(input: {
+      projectId: "'"${PROJECT_ID}"'"
+      contentId: "'"${node_id}"'"
+    }) { item { id } }
+  }' --jq '.data.addProjectV2ItemById.item.id' 2>/dev/null) || return 0
+  gh api graphql -f query='mutation {
+    updateProjectV2ItemFieldValue(input: {
+      projectId: "'"${PROJECT_ID}"'"
+      itemId: "'"${item_id}"'"
+      fieldId: "'"${STATUS_FIELD_ID}"'"
+      value: { singleSelectOptionId: "'"${status_id}"'" }
+    }) { projectV2Item { id } }
+  }' >/dev/null 2>&1 || true
+  echo "📋 Project board: #${ISSUE_NUMBER} → ${label}"
+}
+
+# Move to In Progress at start
+move_to_status "${STATUS_IN_PROGRESS_ID:-}" "In Progress"
+
+# Run the pipeline — on exit, clean up the worktree and update board
 cleanup() {
+  local exit_code=$?
   echo ""
   echo "Cleaning up worktree: $WORKTREE_DIR"
   (cd "$ORIG_REPO_PATH" && git worktree remove "$WORKTREE_DIR" --force 2>/dev/null) || true
+  # If pipeline succeeded (PR created), move to Done
+  if [ $exit_code -eq 0 ] && [ -n "${STATUS_DONE_ID:-}" ]; then
+    move_to_status "${STATUS_DONE_ID}" "Done"
+  fi
 }
 trap cleanup EXIT
 
 # Check for existing checkpoint (from a prior interrupted run)
+# Scoped to this specific issue to avoid cross-contamination (#33)
 LOGS_DIR="/tmp/attractor-logs"
 CHECKPOINT=""
 if [ -d "$LOGS_DIR" ]; then
-  # Find the most recent checkpoint.json for this issue
-  CHECKPOINT=$(find "$LOGS_DIR" -name "checkpoint.json" -newer "$0" -exec grep -l "\"currentNode\"" {} + 2>/dev/null | head -1 || true)
+  CHECKPOINT=$(find "$LOGS_DIR" -name "checkpoint.json" -exec grep -l "\"issueNumber\":\"${ISSUE_NUMBER}\"" {} + 2>/dev/null | head -1 || true)
+fi
+
+if [ -n "$CHECKPOINT" ]; then
+  # Validate checkpoint isn't at exit node
+  CURRENT_NODE=$(python3 -c "import json; print(json.load(open('$CHECKPOINT')).get('currentNode',''))" 2>/dev/null || echo "")
+  if [ "$CURRENT_NODE" = "exit" ]; then
+    echo "Stale checkpoint at exit node — starting fresh"
+    rm -f "$CHECKPOINT"
+    CHECKPOINT=""
+  fi
 fi
 
 if [ -n "$CHECKPOINT" ]; then
