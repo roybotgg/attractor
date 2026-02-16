@@ -101,6 +101,8 @@ export interface PipelineRunnerConfig {
   cleanup?: () => Promise<void>;
   /** Optional CXDB store for persisting pipeline runs to the turn DAG. */
   cxdbStore?: CxdbStore;
+  /** Default model alias (for CXDB tracking). */
+  model?: string;
 }
 
 export interface PipelineResult {
@@ -210,6 +212,7 @@ export class PipelineRunner {
         pipelineId: this.pipelineId,
         graphName: graph.name,
         goal: getStringAttr(graph.attributes, "goal"),
+        model: this.config.model,
       }),
     );
 
@@ -432,7 +435,7 @@ export class PipelineRunner {
       });
 
       // Track stage completion in CXDB
-      const nodeModel = getStringAttr(currentNode.attributes, "model", "");
+      const nodeModel = getStringAttr(currentNode.attributes, "model", "") || this.config.model || "";
       await this.safeCxdb("onStageComplete", () =>
         this.config.cxdbStore!.onStageComplete(
           currentNode.id,

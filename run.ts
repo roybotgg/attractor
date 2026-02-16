@@ -88,6 +88,7 @@ const runner = new PipelineRunner({
   backend,
   eventEmitter: emitter,
   cxdbStore,
+  model: MODEL,
 });
 
 console.log(`Pipeline: ${DOT_FILE}`);
