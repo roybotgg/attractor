@@ -36,6 +36,13 @@ echo "Branch: $BRANCH_NAME"
 echo "Work:   $WORKTREE_DIR"
 echo ""
 
+# Auto-initialize repo if needed (idempotent)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$SCRIPT_DIR/init-repo.sh" ]; then
+  "$SCRIPT_DIR/init-repo.sh" "$ORIG_REPO_PATH"
+  echo ""
+fi
+
 # Ensure main is up to date
 (cd "$ORIG_REPO_PATH" && git fetch origin main)
 
