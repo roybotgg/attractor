@@ -137,6 +137,7 @@ describe("PipelineRunner.resume", () => {
     // Context should carry forward restored values
     expect(result.context.get("my_key")).toBe("my_value");
     expect(result.context.get("graph.goal")).toBe("resume test");
+    expect(result.context.get("run_id")).toBe("resume-test-1");
     // completedNodes should include old ones plus B
     expect(result.completedNodes).toContain("start");
     expect(result.completedNodes).toContain("A");

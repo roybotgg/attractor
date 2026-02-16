@@ -8,6 +8,7 @@ import { parse } from "../parser/index.js";
 import { createSSEStream } from "./sse.js";
 import { WebInterviewer } from "../interviewer/web.js";
 import { createAnswer } from "../types/interviewer.js";
+import { StageStatus } from "../types/outcome.js";
 
 export interface PipelineRecord {
   id: string;
@@ -91,6 +92,7 @@ async function handlePostPipeline(
     ...ctx.runnerConfig,
     eventEmitter: emitter,
     interviewer,
+    abortSignal: abortController.signal,
     onCheckpoint(checkpoint) {
       record.latestCheckpoint = checkpoint;
     },
@@ -99,12 +101,17 @@ async function handlePostPipeline(
   runner.run(graph).then(
     (result) => {
       record.result = result;
-      record.status = "completed";
+      if (record.status === "running") {
+        record.status =
+          result.outcome.status === StageStatus.FAIL ? "failed" : "completed";
+      }
       emitter.close();
     },
     (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
-      record.status = "failed";
+      if (record.status === "running") {
+        record.status = "failed";
+      }
       record.result = undefined;
       emitter.close();
     },

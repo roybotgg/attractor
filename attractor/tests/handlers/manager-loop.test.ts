@@ -76,17 +76,22 @@ function createStubSpawner(opts: {
   exitCode?: number;
   checkpoint?: Checkpoint;
   resolveImmediately?: boolean;
-}): { spawner: ChildProcessSpawner; calls: Array<{ dotFile: string; logsRoot: string }>; killed: { value: boolean } } {
-  const calls: Array<{ dotFile: string; logsRoot: string }> = [];
+}): {
+  spawner: ChildProcessSpawner;
+  calls: Array<{ dotFile: string; logsRoot: string; childWorkdir: string | undefined }>;
+  killed: { value: boolean };
+} {
+  const calls: Array<{ dotFile: string; logsRoot: string; childWorkdir: string | undefined }> = [];
   const killed = { value: false };
 
   const spawner: ChildProcessSpawner = (
     dotFile: string,
     logsRoot: string,
+    childWorkdir?: string,
   ): ChildProcess => {
     const childLogsRoot = join(logsRoot, "child");
     mkdirSync(childLogsRoot, { recursive: true });
-    calls.push({ dotFile, logsRoot });
+    calls.push({ dotFile, logsRoot, childWorkdir });
 
     // Write checkpoint if provided
     if (opts.checkpoint) {
@@ -147,6 +152,32 @@ describe("ManagerLoopHandler", () => {
     const firstCall = calls.at(0);
     expect(firstCall).toBeDefined();
     expect(firstCall?.dotFile).toBe("/path/to/child.dot");
+    expect(firstCall?.childWorkdir).toBeUndefined();
+  });
+
+  it("passes stack.child_workdir to spawner", async () => {
+    const checkpoint = makeCheckpoint();
+    const { spawner, calls } = createStubSpawner({
+      exitCode: 0,
+      checkpoint,
+      resolveImmediately: true,
+    });
+
+    const handler = new ManagerLoopHandler({ spawner });
+    const node = makeNode("mgr", {
+      "manager.max_cycles": integerAttr(2),
+      "manager.poll_interval": durationAttr(0, "0ms"),
+    });
+    const graph = makeGraph({
+      "stack.child_dotfile": stringAttr("/path/to/child.dot"),
+      "stack.child_workdir": stringAttr("/tmp/workdir"),
+    });
+
+    await handler.execute(node, new Context(), graph, tmpDir);
+
+    const firstCall = calls.at(0);
+    expect(firstCall).toBeDefined();
+    expect(firstCall?.childWorkdir).toBe("/tmp/workdir");
   });
 
   it("does not start child when autostart is false", async () => {

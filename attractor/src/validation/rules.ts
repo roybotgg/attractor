@@ -35,7 +35,9 @@ function resolveType(node: Node): string {
 
 function findStartNode(graph: Graph): Node | undefined {
   for (const node of graph.nodes.values()) {
-    if (resolveType(node) === "start") return node;
+    if (resolveType(node) === "start" || node.id.toLowerCase() === "start") {
+      return node;
+    }
   }
   return undefined;
 }
@@ -43,7 +45,10 @@ function findStartNode(graph: Graph): Node | undefined {
 function findTerminalNodes(graph: Graph): Node[] {
   const result: Node[] = [];
   for (const node of graph.nodes.values()) {
-    if (resolveType(node) === "exit") result.push(node);
+    const lowerId = node.id.toLowerCase();
+    if (resolveType(node) === "exit" || lowerId === "exit" || lowerId === "end") {
+      result.push(node);
+    }
   }
   return result;
 }
@@ -55,7 +60,9 @@ const startNodeRule: LintRule = {
   apply(graph: Graph): Diagnostic[] {
     let count = 0;
     for (const node of graph.nodes.values()) {
-      if (resolveType(node) === "start") count++;
+      if (resolveType(node) === "start" || node.id === "start" || node.id === "Start") {
+        count++;
+      }
     }
     if (count === 0) {
       return [
@@ -92,6 +99,16 @@ const terminalNodeRule: LintRule = {
           severity: Severity.ERROR,
           message: "Pipeline must have at least one terminal node (shape=Msquare).",
           fix: 'Add a node with shape=Msquare, e.g.: done [shape=Msquare]',
+        }),
+      ];
+    }
+    if (terminals.length > 1) {
+      return [
+        createDiagnostic({
+          rule: "terminal_node",
+          severity: Severity.ERROR,
+          message: `Pipeline must have exactly one terminal node, found ${terminals.length}.`,
+          fix: "Remove duplicate terminal nodes.",
         }),
       ];
     }

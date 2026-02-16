@@ -12,6 +12,15 @@ import { getStringAttr } from "../types/graph.js";
 import { executePreHook, executePostHook } from "../engine/tool-hooks.js";
 import { FidelityMode } from "../types/fidelity.js";
 
+type ReasoningEffort = "low" | "medium" | "high";
+
+function parseReasoningEffort(value: string): ReasoningEffort | undefined {
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+  return undefined;
+}
+
 export interface SessionBackendConfig {
   providerProfile: ProviderProfile;
   executionEnv: ExecutionEnvironment;
@@ -42,10 +51,17 @@ export class SessionBackend implements CodergenBackend {
   ): Promise<string | Outcome> {
     // Optionally override model from node attributes
     const llmModel = getStringAttr(node.attributes, "llm_model");
-    const profile =
+    const llmProvider = getStringAttr(node.attributes, "llm_provider");
+    let profile =
       llmModel !== ""
         ? { ...this.providerProfile, model: llmModel }
         : this.providerProfile;
+    if (llmProvider !== "") {
+      profile = { ...profile, id: llmProvider };
+    }
+    const reasoningEffort = parseReasoningEffort(
+      getStringAttr(node.attributes, "reasoning_effort"),
+    );
 
     // Build tool call interceptor from hook commands
     let toolCallInterceptor: ToolCallInterceptor | undefined;
@@ -77,15 +93,24 @@ export class SessionBackend implements CodergenBackend {
         threadId,
         profile,
         toolCallInterceptor,
+        reasoningEffort,
         prompt,
       );
     }
+
+    const sessionConfig =
+      toolCallInterceptor || reasoningEffort
+        ? {
+            ...(toolCallInterceptor ? { toolCallInterceptor } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+          }
+        : undefined;
 
     const session = new Session({
       providerProfile: profile,
       executionEnv: this.executionEnv,
       llmClient: this.llmClient,
-      config: toolCallInterceptor ? { toolCallInterceptor } : undefined,
+      config: sessionConfig,
     });
 
     // Register event consumer BEFORE submit so events are captured
@@ -113,16 +138,24 @@ export class SessionBackend implements CodergenBackend {
     threadId: string,
     profile: ProviderProfile,
     toolCallInterceptor: ToolCallInterceptor | undefined,
+    reasoningEffort: ReasoningEffort | undefined,
     prompt: string,
   ): Promise<string> {
     let session = this.sessionCache.get(threadId);
 
     if (!session) {
+      const sessionConfig =
+        toolCallInterceptor || reasoningEffort
+          ? {
+              ...(toolCallInterceptor ? { toolCallInterceptor } : {}),
+              ...(reasoningEffort ? { reasoningEffort } : {}),
+            }
+          : undefined;
       session = new Session({
         providerProfile: profile,
         executionEnv: this.executionEnv,
         llmClient: this.llmClient,
-        config: toolCallInterceptor ? { toolCallInterceptor } : undefined,
+        config: sessionConfig,
       });
       this.sessionCache.set(threadId, session);
     }

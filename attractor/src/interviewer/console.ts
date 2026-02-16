@@ -62,6 +62,14 @@ export class ConsoleInterviewer implements Interviewer {
         return question.defaultAnswer;
       }
       return createAnswer({ value: response, text: response });
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        if (question.defaultAnswer) {
+          return question.defaultAnswer;
+        }
+        return createAnswer({ value: AnswerValue.TIMEOUT });
+      }
+      throw err;
     } finally {
       rl.close();
     }

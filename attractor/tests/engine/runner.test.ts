@@ -9,6 +9,7 @@ import { createOutcome, StageStatus } from "../../src/types/outcome.js";
 import type { Handler } from "../../src/types/handler.js";
 import type { Graph, Node, Edge, AttributeValue } from "../../src/types/graph.js";
 import { stringAttr, integerAttr, booleanAttr } from "../../src/types/graph.js";
+import { ArtifactStore } from "../../src/types/artifact.js";
 
 function makeNode(
   id: string,
@@ -82,6 +83,7 @@ describe("PipelineRunner", () => {
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(result.completedNodes).toEqual(["start", "work"]);
     expect(result.context.get("graph.goal")).toBe("test pipeline");
+    expect(result.context.getString("run_id")).not.toBe("");
     expect(records).toEqual(["start", "work"]);
   });
 
@@ -151,6 +153,96 @@ describe("PipelineRunner", () => {
     expect(kinds).toContain("stage_started");
     expect(kinds).toContain("stage_completed");
     expect(kinds).toContain("pipeline_completed");
+  });
+
+  test("emits stage_failed and pipeline_failed for terminal failures", async () => {
+    const events: PipelineEvent[] = [];
+    const emitter = { emit: (e: PipelineEvent) => events.push(e) };
+
+    const registry = createHandlerRegistry();
+    registry.register("start", successHandler());
+    registry.register("exit", successHandler());
+    registry.register("codergen", {
+      execute: async (node) => {
+        if (node.id === "work") {
+          return createOutcome({
+            status: StageStatus.FAIL,
+            failureReason: "boom",
+          });
+        }
+        return createOutcome({ status: StageStatus.SUCCESS });
+      },
+    });
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("work", { shape: stringAttr("box") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [makeEdge("start", "work"), makeEdge("work", "exit")],
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      eventEmitter: emitter,
+      logsRoot: "/tmp/attractor-runner-test",
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
+
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain("stage_failed");
+    expect(kinds).toContain("pipeline_failed");
+    expect(kinds).not.toContain("pipeline_completed");
+  });
+
+  test("applies fidelity from the selected incoming edge for the next node", async () => {
+    let capturedFidelity = "";
+    const registry = createHandlerRegistry();
+    registry.register("start", successHandler());
+    registry.register("exit", successHandler());
+    registry.register("codergen", {
+      execute: async (node, ctx) => {
+        if (node.id === "path_a") {
+          capturedFidelity = ctx.getString("_fidelity.mode");
+        }
+        return createOutcome({ status: StageStatus.SUCCESS });
+      },
+    });
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("router", { shape: stringAttr("box") }),
+        makeNode("path_a", { shape: stringAttr("box") }),
+        makeNode("path_b", { shape: stringAttr("box") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [
+        makeEdge("start", "router"),
+        makeEdge("router", "path_a", {
+          condition: stringAttr("outcome=success"),
+          fidelity: stringAttr("truncate"),
+        }),
+        makeEdge("router", "path_b", {
+          condition: stringAttr("outcome=fail"),
+          fidelity: stringAttr("full"),
+        }),
+        makeEdge("path_a", "exit"),
+        makeEdge("path_b", "exit"),
+      ],
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      logsRoot: "/tmp/attractor-runner-test",
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(capturedFidelity).toBe("truncate");
   });
 
   test("goal gate enforcement redirects to retry target", async () => {
@@ -561,5 +653,61 @@ describe("PipelineRunner", () => {
 
     const result = await runner.run(graph);
     expect(result.context.get("context.feature")).toBe("implemented");
+  });
+
+  test("aborted signal causes pipeline to return FAIL with 'Pipeline cancelled'", async () => {
+    const events: PipelineEvent[] = [];
+    const emitter = { emit: (e: PipelineEvent) => events.push(e) };
+
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const registry = createHandlerRegistry();
+    registry.register("start", successHandler());
+    registry.register("codergen", successHandler());
+    registry.register("exit", successHandler());
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("work", { shape: stringAttr("box") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [makeEdge("start", "work"), makeEdge("work", "exit")],
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      eventEmitter: emitter,
+      abortSignal: abortController.signal,
+      logsRoot: "/tmp/attractor-runner-test-cancel",
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
+    expect(result.outcome.failureReason).toBe("Pipeline cancelled");
+    expect(events.some((e) => e.kind === "pipeline_failed" && e.data["reason"] === "Pipeline cancelled")).toBe(true);
+  });
+
+  test("exposes ArtifactStore in PipelineResult", async () => {
+    const registry = createHandlerRegistry();
+    registry.register("start", successHandler());
+    registry.register("exit", successHandler());
+
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("exit", { shape: stringAttr("Msquare") }),
+      ],
+      [makeEdge("start", "exit")],
+    );
+
+    const runner = new PipelineRunner({
+      handlerRegistry: registry,
+      logsRoot: "/tmp/attractor-runner-test-artifact",
+    });
+
+    const result = await runner.run(graph);
+    expect(result.artifactStore).toBeInstanceOf(ArtifactStore);
   });
 });

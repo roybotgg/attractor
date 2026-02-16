@@ -71,6 +71,20 @@ describe("start_node rule", () => {
     expect(startErrors.length).toBe(1);
     expect(startErrors[0]?.message).toContain("found 2");
   });
+
+  test("accepts id=start fallback when shape is omitted", () => {
+    const graph = makeGraph(
+      [
+        makeNode("start"),
+        makeNode("task", { shape: stringAttr("box"), prompt: stringAttr("x") }),
+        makeNode("done", { shape: stringAttr("Msquare") }),
+      ],
+      [makeEdge("start", "task"), makeEdge("task", "done")],
+    );
+    const diags = validate(graph);
+    const startErrors = diags.filter((d) => d.rule === "start_node");
+    expect(startErrors.length).toBe(0);
+  });
 });
 
 describe("terminal_node rule", () => {
@@ -83,6 +97,40 @@ describe("terminal_node rule", () => {
     const termErrors = diags.filter((d) => d.rule === "terminal_node");
     expect(termErrors.length).toBe(1);
     expect(termErrors[0]?.severity).toBe(Severity.ERROR);
+  });
+
+  test("multiple terminal nodes produce error", () => {
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("task", { shape: stringAttr("box"), prompt: stringAttr("x") }),
+        makeNode("done1", { shape: stringAttr("Msquare") }),
+        makeNode("done2", { shape: stringAttr("Msquare") }),
+      ],
+      [
+        makeEdge("start", "task"),
+        makeEdge("task", "done1"),
+        makeEdge("task", "done2"),
+      ],
+    );
+    const diags = validate(graph);
+    const termErrors = diags.filter((d) => d.rule === "terminal_node");
+    expect(termErrors.length).toBe(1);
+    expect(termErrors[0]?.message).toContain("found 2");
+  });
+
+  test("accepts id=end fallback when Msquare shape is omitted", () => {
+    const graph = makeGraph(
+      [
+        makeNode("start", { shape: stringAttr("Mdiamond") }),
+        makeNode("task", { shape: stringAttr("box"), prompt: stringAttr("x") }),
+        makeNode("end"),
+      ],
+      [makeEdge("start", "task"), makeEdge("task", "end")],
+    );
+    const diags = validate(graph);
+    const termErrors = diags.filter((d) => d.rule === "terminal_node");
+    expect(termErrors.length).toBe(0);
   });
 });
 

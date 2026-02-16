@@ -68,6 +68,17 @@ describe("evaluateClause", () => {
     expect(evaluateClause("outcome!=success", makeOutcome(StageStatus.SUCCESS), makeContext())).toBe(false);
   });
 
+  test("quoted string literal compares after unescaping", () => {
+    const ctx = makeContext({ "context.note": "hello world" });
+    expect(
+      evaluateClause(
+        "context.note=\"hello world\"",
+        makeOutcome(StageStatus.SUCCESS),
+        ctx,
+      ),
+    ).toBe(true);
+  });
+
   test("bare key truthy when value is non-empty", () => {
     const ctx = makeContext({ flag: "yes" });
     expect(evaluateClause("flag", makeOutcome(), ctx)).toBe(true);
@@ -119,6 +130,17 @@ describe("evaluateCondition", () => {
     const ctx = makeContext({ loop_state: "active" });
     expect(
       evaluateCondition("context.loop_state!=exhausted", makeOutcome(), ctx),
+    ).toBe(true);
+  });
+
+  test("quoted string literals work in full conditions", () => {
+    const ctx = makeContext({ "my.value": "hello world" });
+    expect(
+      evaluateCondition(
+        "outcome=success && context.my.value=\"hello world\"",
+        makeOutcome(StageStatus.SUCCESS),
+        ctx,
+      ),
     ).toBe(true);
   });
 
