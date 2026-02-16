@@ -85,6 +85,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-bun run run.ts issue.dot
+# Check for existing checkpoint (from a prior interrupted run)
+LOGS_DIR="/tmp/attractor-logs"
+CHECKPOINT=""
+if [ -d "$LOGS_DIR" ]; then
+  # Find the most recent checkpoint.json for this issue
+  CHECKPOINT=$(find "$LOGS_DIR" -name "checkpoint.json" -newer "$0" -exec grep -l "\"currentNode\"" {} + 2>/dev/null | head -1 || true)
+fi
+
+if [ -n "$CHECKPOINT" ]; then
+  echo "Found checkpoint from interrupted run: $CHECKPOINT"
+  echo "Resuming pipeline..."
+  echo ""
+  bun run run.ts issue.dot --resume "$CHECKPOINT"
+else
+  bun run run.ts issue.dot
+fi
 EXIT_CODE=$?
 exit $EXIT_CODE

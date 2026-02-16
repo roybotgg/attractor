@@ -19,6 +19,7 @@ const MODEL = process.env.ATTRACTOR_MODEL || "normal"; // Sonnet 4.5 by default
 const THINKING = process.env.ATTRACTOR_THINKING || "low";
 const TIMEOUT = parseInt(process.env.ATTRACTOR_TIMEOUT || "600", 10);
 const DOT_FILE = process.argv[2] || "pipeline.dot";
+const RESUME_CHECKPOINT = process.argv[3] === "--resume" ? process.argv[4] : undefined;
 const SESSION_ID = process.env.ATTRACTOR_SESSION_ID || `attractor-${randomUUID().slice(0, 8)}`;
 
 // CXDB config (set CXDB_ENABLED=1 to activate)
@@ -91,6 +92,9 @@ const runner = new PipelineRunner({
 
 console.log(`Pipeline: ${DOT_FILE}`);
 console.log(`Model: ${MODEL} | Thinking: ${THINKING} | Session: ${SESSION_ID}`);
+if (RESUME_CHECKPOINT) {
+  console.log(`Resuming from: ${RESUME_CHECKPOINT}`);
+}
 if (CXDB_ENABLED) {
   console.log(`CXDB: ${CXDB_HOST}:${CXDB_PORT} (tracking enabled)`);
 }
@@ -100,7 +104,9 @@ try {
   if (cxdbStore) {
     await cxdbStore.connect();
   }
-  const result = await runner.run(graph);
+  const result = RESUME_CHECKPOINT
+    ? await runner.resume(graph, RESUME_CHECKPOINT)
+    : await runner.run(graph);
   console.log(`\nOutcome: ${result.outcome.status}`);
   console.log(`Nodes completed: ${result.completedNodes.join(", ")}`);
   if (cxdbStore) {
