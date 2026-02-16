@@ -12,8 +12,14 @@
 #   ATTRACTOR_MODEL     Model alias (default: normal)
 #   ATTRACTOR_THINKING  Thinking level (default: low)
 #   ATTRACTOR_TIMEOUT   Timeout per stage in seconds (default: 600)
+#   CXDB_ENABLED        Set to 1 to enable CXDB tracking (default: 1)
+#   CXDB_HTTP_PORT      CXDB HTTP port (default: 9010)
 
 set -euo pipefail
+
+# Enable CXDB tracking by default
+export CXDB_ENABLED="${CXDB_ENABLED:-1}"
+export CXDB_HTTP_PORT="${CXDB_HTTP_PORT:-9010}"
 
 ISSUE_NUMBER="${1:?Usage: ./run-issue.sh <issue-number> [repo-path]}"
 ORIG_REPO_PATH="${2:-/home/rey/clawd/localrank-city}"
