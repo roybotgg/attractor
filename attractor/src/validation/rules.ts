@@ -35,7 +35,7 @@ function resolveType(node: Node): string {
 
 function findStartNode(graph: Graph): Node | undefined {
   for (const node of graph.nodes.values()) {
-    if (resolveType(node) === "start" || node.id === "start" || node.id === "Start") {
+    if (resolveType(node) === "start" || node.id.toLowerCase() === "start") {
       return node;
     }
   }

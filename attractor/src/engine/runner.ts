@@ -21,7 +21,7 @@ import { validateOrRaise } from "../validation/validate.js";
 import { builtInTransforms } from "../transforms/index.js";
 import { FidelityMode as FM, isValidFidelityMode } from "../types/fidelity.js";
 import { dirname, join } from "path";
-import { mkdir, unlink, writeFile } from "fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 import { ArtifactStore } from "../types/artifact.js";
@@ -133,9 +133,10 @@ function findStartNode(graph: Graph): Node {
       return node;
     }
   }
-  // 2. id="start" or "Start"
-  const byId = graph.nodes.get("start") ?? graph.nodes.get("Start");
-  if (byId) return byId;
+  // 2. id-based fallback (case-insensitive, matches validation rules)
+  for (const node of graph.nodes.values()) {
+    if (node.id.toLowerCase() === "start") return node;
+  }
 
   throw new Error("No start node found: need shape=Mdiamond or id=start");
 }
@@ -531,7 +532,7 @@ export class PipelineRunner {
 
       if (statusExists) {
         try {
-          const content = await Bun.file(statusPath).text();
+          const content = await readFile(statusPath, "utf-8");
           outcome = parseOutcomeFromStatusFile(content, outcome);
         } catch {
           // Keep handler outcome when status file cannot be parsed.
