@@ -46,9 +46,10 @@ export class OpenClawBackend implements CodergenBackend {
     const nodeModel = getStringAttr(node.attributes, "model", "");
     const effectiveModel = nodeModel || this.config.model;
 
-    // If node specifies its own model, use a unique session ID to avoid conflicts
+    // Each stage gets its own session ID for fresh context isolation.
+    // This prevents context degradation from prior stages bleeding into later ones.
     let sessionId = this.config.sessionId;
-    if (nodeModel && sessionId) {
+    if (sessionId) {
       sessionId = `${sessionId}-${node.id}`;
     }
 

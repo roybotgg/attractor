@@ -67,6 +67,14 @@ if [[ "$REPO_SLUG" == "reymarx/localrank-city" ]]; then
   export STATUS_DONE_ID="98236657"
 fi
 
+if [[ "$REPO_SLUG" == "reymarx/llmstxt-saas" ]]; then
+  export PROJECT_ID="PVT_kwHOACgTfs4BPSt3"
+  export STATUS_FIELD_ID="PVTSSF_lAHOACgTfs4BPSt3zg9viWI"
+  export STATUS_IN_PROGRESS_ID="47fc9ee4"
+  export STATUS_REVIEW_ID="47fc9ee4"
+  export STATUS_DONE_ID="98236657"
+fi
+
 cd "$(dirname "$0")"
 
 # Run the pipeline — on exit, clean up the worktree
