@@ -49,7 +49,20 @@ Read `issue.md` and check each acceptance criterion:
 | **Secrets** | Hardcoded API keys, passwords, tokens |
 | **Input Validation** | Missing Zod schemas, unchecked user input |
 
-### Step 4: Code Quality Review
+### OWASP & Critical Anti-Patterns
+
+| Issue | Defense | P0 Block Criteria |
+|-------|---------|-------------------|
+| Broken Access Control | Deny by default, verify every request | Unprotected admin endpoints |
+| Injection | Parameterized queries, whitelist validation | String concat in SQL |
+| Hardcoded Secrets | Env vars only | API keys/passwords in code |
+| Weak Crypto | AES-256, bcrypt/Argon2, TLS 1.2+ | MD5/SHA1 for passwords |
+| Auth Failures | Rate limiting, secure sessions | Missing auth on protected routes |
+| Vulnerable Components | Dependency scanning, audit | High/Critical CVEs unpatched |
+
+---
+
+## Step 4: Code Quality Review
 
 | Check | What to Look For |
 |-------|------------------|
@@ -60,6 +73,23 @@ Read `issue.md` and check each acceptance criterion:
 | **Dead Code** | Unused imports, functions, variables? |
 | **Performance** | N+1 queries? Unnecessary re-renders? Missing memoization? |
 | **Documentation** | Complex logic explained? Public APIs documented? |
+
+### Review Standards Summary
+- **Correctness:** Logic errors, edge cases, race conditions, resource leaks
+- **Security:** Input validation (whitelist), no secrets/injection, auth enforced
+- **Quality:** SRP, DRY, clear naming, explicit error handling
+- **Testing:** 70%+ line, 60%+ branch coverage, edge cases, behavior verification
+
+---
+
+## The "Actually Works" Protocol
+
+### Before Completing Review - ALL Must Be YES
+- [ ] Ran/built the code, tests executed and PASS
+- [ ] Saw actual results (not "should work"), checked logs for errors
+- [ ] Would bet $100 this works
+
+**Reading code is not enough. Test it before approving.**
 
 ### Step 5: Fix Issues Found
 For each issue discovered:
@@ -120,13 +150,14 @@ Create `$REPO_PATH/.factory/review.md`:
 Before completing review, verify:
 
 - [ ] All acceptance criteria from issue.md are met
-- [ ] Security review passed
+- [ ] Security review passed (no P0 issues)
 - [ ] No `any` types introduced
 - [ ] Error handling is explicit
 - [ ] Tests exist and pass
 - [ ] Code follows existing patterns
 - [ ] No dead code or debug logs
 - [ ] review.md is complete and accurate
+- [ ] Actually ran and verified the code works
 
 ---
 
@@ -135,10 +166,12 @@ Before completing review, verify:
 ### ✅ Always
 - Read the full diff carefully
 - Check against original requirements
-- Verify security considerations
+- Verify security considerations (OWASP checklist)
 - Fix issues found during review
 - Document all findings in review.md
 - Re-run tests after making fixes
+- Execute code and verify it works (not just read it)
+- Block PRs with P0 security issues
 
 ### ⚠️ Ask First
 - Major refactoring beyond fixing review issues
@@ -146,7 +179,9 @@ Before completing review, verify:
 
 ### 🚫 Never
 - Approve changes that don't meet requirements
-- Ignore security issues
+- Ignore security issues (especially P0 issues)
 - Skip writing review.md
 - Introduce new bugs while fixing review issues
 - Remove tests that were passing
+- Approve without actually running the code
+- Pass code review based on "looks correct" alone
