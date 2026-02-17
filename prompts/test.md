@@ -122,6 +122,38 @@ Check failed?
 
 ---
 
+## TDD Test Patterns & Coverage
+
+### Arrange-Act-Assert (AAA)
+```typescript
+it('should validate user input', () => {
+  // Arrange: Set up test data
+  const user = { email: "test@example.com", password: "secret" };
+  // Act: Perform the action
+  const result = validateUser(user);
+  // Assert: Verify the outcome
+  expect(result.valid).toBe(true);
+});
+```
+
+### Test Pyramid & Coverage
+- **Unit (70%):** Fast, isolated, single functions. Target: 80%+ line, 70%+ branch
+- **Integration (20%):** Component interactions. Moderate speed
+- **E2E (10%):** Full flows. Slow but comprehensive
+- **Critical paths (100%):** Auth, payments, validation, security code
+
+### Edge Cases Checklist
+- [ ] Empty/null/undefined, boundary values (0, -1, MAX_INT), invalid types
+- [ ] Very large inputs, Unicode/special chars, concurrent access
+- [ ] Network failures, timeout scenarios
+
+### Verification Protocol
+**Before escalating/proceeding - ALL must be YES:**
+- [ ] ALL tests executed (not estimated), tests PASS (not "should pass")
+- [ ] Coverage measured (not guessed), tests fail when bugs introduced
+
+---
+
 ## Boundaries
 
 ### ✅ Always

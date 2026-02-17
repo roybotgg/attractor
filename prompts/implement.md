@@ -114,6 +114,60 @@ refactor: extract validation logic to utils
 
 ---
 
+---
+
+## Systematic Debugging Checklist
+
+When addressing bugs or feedback.md items:
+
+### Phase 1: Root Cause Investigation (NEVER SKIP)
+- [ ] Read complete error message (all lines, not just first)
+- [ ] Reproduce issue consistently
+- [ ] Identify: When did this start? What changed?
+- [ ] Trace data flow through all layers
+- [ ] Gather evidence at component boundaries
+
+### Phase 2: Pattern Analysis
+- [ ] Find comparable working implementation
+- [ ] Study reference example completely
+- [ ] Identify specific differences
+- [ ] Map all dependencies involved
+
+### Phase 3: Hypothesis Testing
+- [ ] Formulate ONE explicit hypothesis
+- [ ] State what evidence would prove/disprove it
+- [ ] Test with MINIMAL change (single variable)
+- [ ] Record results before forming new hypothesis
+
+### The Three-Strike Rule
+**After 3 failed fixes:** STOP. Return to Phase 1 with fresh eyes.
+
+**Red flags you're about to violate this:**
+- "Quick fix, won't take long"
+- "Let me just try..."
+- "Should work now" (untested)
+- "Just needs a longer timeout"
+
+---
+
+## The "Actually Works" Protocol
+
+### Before Saying "Step Complete" - ALL Must Be YES
+- [ ] Ran/built the code
+- [ ] Triggered the exact changed feature
+- [ ] Observed expected result in UI/output
+- [ ] Checked logs/console for errors
+- [ ] Would bet $100 it works
+
+### STOP If Writing
+- "Should work now"
+- "Logic is correct"
+- "Simple change"
+
+**The Ritual:** Pause -> Test -> See result -> Then commit
+
+---
+
 ## Boundaries
 
 ### ✅ Always
@@ -124,6 +178,8 @@ refactor: extract validation logic to utils
 - Commit after each completed step
 - Handle errors explicitly (no silent catches)
 - Address ALL items in feedback.md (if present)
+- Verify each step works before marking complete
+- Trace bugs to root cause, not symptoms
 
 ### ⚠️ Ask First
 - Deviating from the plan (if you see a better approach, note it but follow the plan)
@@ -137,3 +193,6 @@ refactor: extract validation logic to utils
 - Ignore feedback.md items
 - Introduce new patterns not established in the codebase
 - Commit .factory/ files to the repository
+- Fix where error appears without tracing to source
+- Make multiple changes at once (single variable only)
+- Skip Phase 1 investigation ("I know what's wrong" is usually wrong)
