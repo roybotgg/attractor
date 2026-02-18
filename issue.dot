@@ -17,8 +17,8 @@ digraph Issue {
 
   setup    [label="Setup",     prompt_file="prompts/setup.md"]
   plan     [label="Plan",      model="opus46", prompt_file="prompts/plan.md"]
-  implement [label="Implement", prompt_file="prompts/implement.md"]
-  test     [label="Test",      model="quick",  prompt_file="prompts/test.md"]
+  implement [label="Implement", prompt_file="prompts/implement.md", max_visits="4"]
+  test     [label="Test",      model="quick",  prompt_file="prompts/test.md", max_visits="4"]
   review   [label="Review",    model="opus46", prompt_file="prompts/review.md"]
   publish  [label="Publish",   prompt_file="prompts/publish.md"]
 
@@ -26,5 +26,6 @@ digraph Issue {
   start -> setup -> plan -> implement -> test -> review -> publish -> exit
 
   // Retry: if test fails, feed back to implement with feedback.md
-  test -> implement [label="tests fail", condition="outcome=fail"]
+  // delay_ms adds a cooldown between retries to avoid rate-limit exhaustion
+  test -> implement [label="tests fail", condition="outcome=fail", delay_ms="30000"]
 }

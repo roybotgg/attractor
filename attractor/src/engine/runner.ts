@@ -708,6 +708,13 @@ export class PipelineRunner {
         continue;
       }
 
+      // Step 7.5: Edge delay (cooldown between retries to avoid rate-limit exhaustion)
+      const edgeDelayMs = getIntegerAttr(nextEdge.attributes, "delay_ms", 0);
+      if (edgeDelayMs > 0) {
+        console.log(`[delay] Waiting ${edgeDelayMs}ms before transitioning ${currentNode.id} → ${nextEdge.to}`);
+        await new Promise((resolve) => setTimeout(resolve, edgeDelayMs));
+      }
+
       // Step 8: Advance to next node
       const nextNode = graph.nodes.get(nextEdge.to);
       if (!nextNode) {
