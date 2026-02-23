@@ -71,6 +71,15 @@ REPO_PATH="$WORKTREE_DIR"
 
 export ISSUE_NUMBER ISSUE_URL REPO_PATH REPO_SLUG ORIG_REPO_PATH BRANCH_NAME
 
+# --- Single-pipeline mutex ---
+# Only one pipeline should run at a time to avoid rate-limit exhaustion.
+# Others will queue (flock blocks until the lock is released).
+PIPELINE_LOCK="/tmp/attractor-pipeline.lock"
+exec 9>"$PIPELINE_LOCK"
+echo "🔒 Acquiring pipeline lock (waiting if another pipeline is running)..."
+flock 9
+echo "🔓 Lock acquired — starting pipeline"
+
 # --- Rate-limit cooldown ---
 # If another pipeline finished recently, wait before starting to avoid
 # hitting provider rate limits across back-to-back runs.
