@@ -22,10 +22,14 @@ digraph Issue {
   review   [label="Review",    model="opus46", prompt_file="prompts/review.md"]
   publish  [label="Publish",   prompt_file="prompts/publish.md"]
 
-  // Pipeline flow
-  start -> setup -> plan -> implement -> test -> review -> publish -> exit
+  // Pipeline flow — delay_ms on key edges to avoid rate-limit exhaustion
+  start -> setup -> plan -> implement
+  implement -> test [delay_ms="10000"]
+  test -> review [delay_ms="15000"]
+  review -> publish [delay_ms="10000"]
+  publish -> exit
 
   // Retry: if test fails, feed back to implement with feedback.md
-  // delay_ms adds a cooldown between retries to avoid rate-limit exhaustion
-  test -> implement [label="tests fail", condition="outcome=fail", delay_ms="30000"]
+  // 90s cooldown between retries to let rate limits recover
+  test -> implement [label="tests fail", condition="outcome=fail", delay_ms="90000"]
 }

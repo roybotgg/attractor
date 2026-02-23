@@ -71,6 +71,22 @@ REPO_PATH="$WORKTREE_DIR"
 
 export ISSUE_NUMBER ISSUE_URL REPO_PATH REPO_SLUG ORIG_REPO_PATH BRANCH_NAME
 
+# --- Rate-limit cooldown ---
+# If another pipeline finished recently, wait before starting to avoid
+# hitting provider rate limits across back-to-back runs.
+LOCKFILE="/tmp/attractor-last-run.ts"
+COOLDOWN_SECS=120
+if [ -f "$LOCKFILE" ]; then
+  LAST_RUN=$(cat "$LOCKFILE" 2>/dev/null || echo 0)
+  NOW=$(date +%s)
+  ELAPSED=$((NOW - LAST_RUN))
+  if [ "$ELAPSED" -lt "$COOLDOWN_SECS" ]; then
+    WAIT=$((COOLDOWN_SECS - ELAPSED))
+    echo "⏳ Cooling down ${WAIT}s (rate-limit protection)..."
+    sleep "$WAIT"
+  fi
+fi
+
 # Default project board IDs for LocalRank.city (optional)
 if [[ "$REPO_SLUG" == "reymarx/localrank-city" ]]; then
   export PROJECT_ID="PVT_kwHOACgTfs4BO4P2"
@@ -124,6 +140,8 @@ move_to_status "${STATUS_IN_PROGRESS_ID:-}" "In Progress"
 cleanup() {
   local exit_code=$?
   echo ""
+  # Stamp finish time for rate-limit cooldown between runs
+  date +%s > /tmp/attractor-last-run.ts
   echo "Cleaning up worktree: $WORKTREE_DIR"
   (cd "$ORIG_REPO_PATH" && git worktree remove "$WORKTREE_DIR" --force 2>/dev/null) || true
   # If pipeline succeeded (PR created), move to Done
