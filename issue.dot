@@ -26,7 +26,7 @@ digraph Issue {
   start -> setup -> plan -> implement
   implement -> test [delay_ms="10000"]
   test -> review [delay_ms="15000"]
-  review -> publish [delay_ms="10000"]
+  review -> publish [delay_ms="120000"]
   publish -> exit
 
   // Retry: if test fails, feed back to implement with feedback.md
