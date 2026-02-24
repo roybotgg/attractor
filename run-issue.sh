@@ -71,6 +71,17 @@ REPO_PATH="$WORKTREE_DIR"
 
 export ISSUE_NUMBER ISSUE_URL REPO_PATH REPO_SLUG ORIG_REPO_PATH BRANCH_NAME
 
+# Write pipeline metadata to a file in the worktree so OpenClaw node sessions
+# (which don't inherit shell env vars) can read it during the publish stage.
+mkdir -p "$WORKTREE_DIR/.factory"
+cat > "$WORKTREE_DIR/.factory/pipeline-env.sh" <<EOF
+export ISSUE_NUMBER="$ISSUE_NUMBER"
+export ISSUE_URL="$ISSUE_URL"
+export REPO_PATH="$WORKTREE_DIR"
+export REPO_SLUG="$REPO_SLUG"
+export BRANCH_NAME="$BRANCH_NAME"
+EOF
+
 # --- Single-pipeline mutex ---
 # Only one pipeline should run at a time to avoid rate-limit exhaustion.
 # Others will queue (flock blocks until the lock is released).
